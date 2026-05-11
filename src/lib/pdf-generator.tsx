@@ -411,8 +411,8 @@ function RevenuePage({ data }: { data: ReportData }) {
   const location = data.dashboard.location;
   const displayMonths = revenue.months;
   const lastIdx = displayMonths.length - 1;
-  // Include all items with a label — section headers provide grouping context executives expect
-  const visibleItems = revenue.lineItems.filter((item) => item.label.trim() !== "");
+  // Hide section headers (they have no figures) — data rows are self-descriptive
+  const visibleItems = revenue.lineItems.filter((item) => item.label.trim() !== "" && !item.isSectionHeader);
   // YTD totals: sum each revenue line across all displayed months
   const totalLine = revenue.lineItems.find((li) => li.label.toLowerCase().includes("total with relief"));
   const ytdTotal = totalLine ? totalLine.values.reduce<number>((sum, v) => sum + (v ?? 0), 0) : 0;
@@ -469,14 +469,14 @@ function RevenuePage({ data }: { data: ReportData }) {
             <Text style={{ fontSize: 14, fontFamily: "Helvetica-Bold", color: C.white }}>{fmt$(currentMonthTotal)}</Text>
             <Text style={{ fontSize: 6, color: C.gray400, marginTop: 2 }}>Net after discounts — P2 final column</Text>
           </View>
-          <View style={{ flex: 1, backgroundColor: C.navyMid, borderRadius: 6, padding: 10, alignItems: "center" }}>
+          <View style={{ flex: 1, backgroundColor: C.navy, borderRadius: 6, padding: 10, alignItems: "center" }}>
             <Text style={{ fontSize: 6.5, color: C.gold, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 3 }}>
               Year-to-Date Revenue ({displayMonths[0]?.slice(0, 3)}–{displayMonths[lastIdx]?.slice(0, 3)})
             </Text>
             <Text style={{ fontSize: 14, fontFamily: "Helvetica-Bold", color: C.white }}>{fmt$(ytdTotal)}</Text>
             <Text style={{ fontSize: 6, color: C.gray400, marginTop: 2 }}>Cumulative net revenue — {displayMonths.length} months</Text>
           </View>
-          <View style={{ flex: 1, backgroundColor: C.navyMid, borderRadius: 6, padding: 10, alignItems: "center" }}>
+          <View style={{ flex: 1, backgroundColor: C.navy, borderRadius: 6, padding: 10, alignItems: "center" }}>
             <Text style={{ fontSize: 6.5, color: C.gold, textTransform: "uppercase", letterSpacing: 0.8, marginBottom: 3 }}>
               Monthly Average
             </Text>
@@ -553,16 +553,13 @@ function OccupancyPage({ data }: { data: ReportData }) {
         ))}
         {/* Totals row — flex groups match column header groups to avoid number collision */}
         <View style={[s.tRow, s.tRowTotal]}>
-          {/* Spans: Space ID (1.1) + Type (1.4) + Status (1.0) + Sq Ft (0.9) = 4.4 */}
-          <Text style={[s.tdTotal, { flex: 4.4 }]}>
+          <Text style={[s.tdTotal, { flex: 5 }]}>
             Total — {sorted.length} Spaces · {sorted.reduce((sum, r) => sum + (r.sqFt || 0), 0).toLocaleString()} sf
           </Text>
-          {/* Spans: Company (2.8) */}
-          <Text style={[s.tdTotal, { flex: 2.8, color: C.green }]}>
+          <Text style={[s.tdTotal, { flex: 3, textAlign: "right", color: C.green }]}>
             {occupancy.occupiedCount} Occupied
           </Text>
-          {/* Spans: Move-In (1.5) + Move-Out (1.5) + Term (0.8) = 3.8 */}
-          <Text style={[s.tdTotal, { flex: 3.8, color: "#F87171" }]}>
+          <Text style={[s.tdTotal, { flex: 3, textAlign: "right", color: "#F87171" }]}>
             {occupancy.vacantCount} Vacant
           </Text>
         </View>
