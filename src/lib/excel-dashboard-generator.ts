@@ -4,7 +4,6 @@ import * as XLSX from "xlsx-js-style";
 
 type CellValue = string | number | null;
 
-// xlsx-js-style cell object — value, formula, style, type
 interface StyledCell {
   v?: CellValue;
   f?: string;           // formula (no leading =)
@@ -35,8 +34,6 @@ const GOLD = "C9A84C";
 const WHITE = "FFFFFF";
 const LIGHT_GRAY = "F3F4F6";
 const MED_GRAY = "E5E7EB";
-const GREEN = "16A34A";
-const RED = "DC2626";
 const BORDER_COLOR = "D1D5DB";
 
 const THIN_BORDER = {
@@ -110,15 +107,30 @@ function dataCell(value: CellValue, numFmt?: string, rowIdx?: number): StyledCel
   };
 }
 
-function formulaCell(formula: string, numFmt?: string, rowIdx?: number, colored?: "pos" | "neg"): StyledCell {
+// cachedVal: optional display value (stored as v so Excel shows it before calculating)
+function formulaCell(formula: string, numFmt?: string, rowIdx?: number, cachedVal?: number): StyledCell {
   const isAlt = rowIdx != null && rowIdx % 2 === 1;
-  const fontColor = colored === "pos" ? GREEN : colored === "neg" ? RED : "374151";
   return {
     f: formula,
+    v: cachedVal ?? 0,
     t: "n",
     s: {
       fill: { fgColor: { rgb: isAlt ? LIGHT_GRAY : WHITE } },
-      font: { color: { rgb: fontColor }, ...(colored ? { bold: true } : {}) },
+      font: { color: { rgb: "374151" } },
+      border: THIN_BORDER,
+      ...(numFmt ? { numFmt } : {}),
+    },
+  };
+}
+
+function boldFormulaCell(formula: string, numFmt?: string, cachedVal?: number): StyledCell {
+  return {
+    f: formula,
+    v: cachedVal ?? 0,
+    t: "n",
+    s: {
+      fill: { fgColor: { rgb: MED_GRAY } },
+      font: { bold: true, color: { rgb: "111827" } },
       border: THIN_BORDER,
       ...(numFmt ? { numFmt } : {}),
     },
@@ -135,19 +147,6 @@ function labelCell(text: string, rowIdx?: number): StyledCell {
       font: { bold: false, color: { rgb: "374151" } },
       border: THIN_BORDER,
       alignment: { horizontal: "left" },
-    },
-  };
-}
-
-function avgCell(formula: string, numFmt?: string): StyledCell {
-  return {
-    f: formula,
-    t: "n",
-    s: {
-      fill: { fgColor: { rgb: MED_GRAY } },
-      font: { bold: true, color: { rgb: "111827" } },
-      border: THIN_BORDER,
-      ...(numFmt ? { numFmt } : {}),
     },
   };
 }
@@ -187,7 +186,7 @@ function colLetter(idx: number): string {
   return result;
 }
 
-/** 1-indexed Excel row address */
+/** 1-indexed Excel cell address */
 function cellAddr(col: number, row: number): string {
   return `${colLetter(col)}${row}`;
 }
@@ -204,10 +203,10 @@ interface SalesByMonthData {
   rows: (CellValue[])[];
   headerRowIdx: number;
   monthCodes: string[];
-  monthColIndices: number[];
-  currentMonthIdx: number;
+  monthColIndices: number[];   // 0-based source column indices for each month
+  currentMonthIdx: number;     // index into monthCodes / monthColIndices
   lookupByLabel: Map<string, (number | null)[]>;
-  lookupRowIdx: Map<string, number>;  // label → 1-indexed row in source sheet
+  lookupRowIdx: Map<string, number>;  // label (lowercase) → 1-indexed row in source sheet
 }
 
 function parseSalesByMonth(wb: XLSX.WorkBook): SalesByMonthData {
@@ -271,50 +270,6 @@ function parseSalesByMonth(wb: XLSX.WorkBook): SalesByMonthData {
   return { sheetName, rows, headerRowIdx, monthCodes, monthColIndices, currentMonthIdx, lookupByLabel, lookupRowIdx };
 }
 
-interface MonthlyMetricsData {
-  sheetName: string | null;
-  metrics: Map<string, (number | null)[]>;
-  monthCodes: string[];
-  colIndices: number[];
-  labelRowIdx: Map<string, number>; // label → 1-indexed row
-}
-
-function parseMonthlyMetrics(wb: XLSX.WorkBook): MonthlyMetricsData {
-  const sheetName = wb.SheetNames.find((n) => /monthly.?metrics/i.test(n)) ?? null;
-  if (!sheetName) return { sheetName: null, metrics: new Map(), monthCodes: [], colIndices: [], labelRowIdx: new Map() };
-
-  const ws = wb.Sheets[sheetName];
-  const rows: (CellValue[])[] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: true }) as (CellValue[])[];
-  if (rows.length === 0) return { sheetName, metrics: new Map(), monthCodes: [], colIndices: [], labelRowIdx: new Map() };
-
-  const headerRow = rows[0];
-  const colIndices: number[] = [];
-  const monthSerials: number[] = [];
-  headerRow.forEach((cell, j) => {
-    if (j > 0 && isExcelSerial(cell)) {
-      monthSerials.push(cell as number);
-      colIndices.push(j);
-    }
-  });
-
-  const monthCodes = monthSerials.map(serialToMonthCode);
-  const metrics = new Map<string, (number | null)[]>();
-  const labelRowIdx = new Map<string, number>();
-
-  for (let i = 1; i < rows.length; i++) {
-    const row = rows[i];
-    const label = str(row[0]);
-    if (!label) continue;
-    const values = colIndices.map((j) => num(row[j]));
-    metrics.set(label, values);
-    metrics.set(label.toLowerCase().trim(), values);
-    labelRowIdx.set(label, i + 1); // 1-indexed
-    labelRowIdx.set(label.toLowerCase().trim(), i + 1);
-  }
-
-  return { sheetName, metrics, monthCodes, colIndices, labelRowIdx };
-}
-
 interface OccupancyStats {
   sheetName: string;
   location: string;
@@ -334,7 +289,7 @@ function parseOccupancyStats(wb: XLSX.WorkBook): OccupancyStats {
   const rows: (CellValue[])[] = XLSX.utils.sheet_to_json(ws, { header: 1, defval: null, raw: false }) as (CellValue[])[];
 
   let headerRowIdx = -1;
-  let statusCol = 3, spaceTypeCol = 4, sqFtCol = 6, propCol = 0;
+  let statusCol = 3, spaceTypeCol = 4, sqFtCol = 6;
 
   for (let i = 0; i < rows.length; i++) {
     const rowLower = rows[i].map((c) => str(c).toLowerCase());
@@ -343,11 +298,9 @@ function parseOccupancyStats(wb: XLSX.WorkBook): OccupancyStats {
       const si = rowLower.findIndex((c) => c === "status");
       const ti = rowLower.findIndex((c) => c.includes("type"));
       const qi = rowLower.findIndex((c) => c.includes("sq"));
-      const pi = rowLower.findIndex((c) => c.includes("property"));
       if (si >= 0) statusCol = si;
       if (ti >= 0) spaceTypeCol = ti;
       if (qi >= 0) sqFtCol = qi;
-      if (pi >= 0) propCol = pi;
       break;
     }
   }
@@ -363,8 +316,8 @@ function parseOccupancyStats(wb: XLSX.WorkBook): OccupancyStats {
     const spaceName = str(row[1]);
     if (!spaceName) continue;
 
-    if (!location && propCol >= 0) {
-      const propVal = str(row[propCol]);
+    if (!location) {
+      const propVal = str(row[0]);
       const m = propVal.match(/coworking\s+(.+?)(?:\s*\(|$)/i);
       if (m) location = m[1].trim();
     }
@@ -401,228 +354,238 @@ function parseOccupancyStats(wb: XLSX.WorkBook): OccupancyStats {
 function buildP1Sheet(
   occ: OccupancyStats,
   sales: SalesByMonthData,
-  metrics: MonthlyMetricsData,
   p2SheetName: string,
+  wb: XLSX.WorkBook,
 ): AoaCell[][] {
   const { currentMonthIdx, monthCodes, lookupByLabel, lookupRowIdx } = sales;
   const reportMonthCode = monthCodes[currentMonthIdx];
-  const currentMonthCol = sales.monthColIndices[currentMonthIdx];
 
-  // Detect current revenue row for formula
-  const revenueLabels = ["total with relief", "total revenue", "total income"];
-  let revenueRowLabel = "";
-  for (const l of revenueLabels) {
-    if (lookupRowIdx.has(l)) { revenueRowLabel = l; break; }
-  }
-  const revenueRow = revenueRowLabel ? lookupRowIdx.get(revenueRowLabel)! : null;
-  const revenueFormula = revenueRow
-    ? sheetRef(p2SheetName, cellAddr(currentMonthCol, revenueRow))
-    : null;
-
-  // P.3 column letters for COUNTIFS/SUMIFS
-  const statusLetter = colLetter(occ.statusCol);
-  const typeLetter = colLetter(occ.typeCol);
-  const sqftLetter = colLetter(occ.sqFtCol);
+  // P.3 column letters (detected dynamically from header)
+  const statusLetter = colLetter(occ.statusCol);   // e.g. "D"
+  const typeLetter   = colLetter(occ.typeCol);      // e.g. "E"
+  const sqftLetter   = colLetter(occ.sqFtCol);      // e.g. "G"
   const p3 = occ.sheetName;
 
-  // Computed fallbacks for display even when formula is used
+  // P.2 month column: source month at col j maps to P.2 col j+1 (labels in col B)
+  const currentMonthP2ColLetter = colLetter(sales.monthColIndices[currentMonthIdx] + 1);
+
+  // Revenue formula: references P.2 "Total with Relief" row 16
+  const revFormula = sheetRef(p2SheetName, `${currentMonthP2ColLetter}16`);
+
+  // Computed fallbacks
   const dd = occ.dedicatedDesk;
   const po = occ.privateOffice;
-  const totalSpaces = dd.total + po.total;
-  const totalOccupied = dd.occupied + po.occupied;
-  const totalSqFt = dd.totalSqFt + po.totalSqFt;
-  const totalOccSqFt = dd.occupiedSqFt + po.occupiedSqFt;
 
-  // Monthly Metrics lookups
-  function getMetric(key: string): (number | null)[] {
-    return metrics.metrics.get(key) ?? metrics.metrics.get(key.toLowerCase()) ?? [];
+  // ── KPI table (rows 10, 11, 12 in output sheet) ───────────────────────────
+  // Layout: A(blank) | B(label) | C(#spaces) | D(occupied) | E(%spaces) | F(sqft) | G(occ sqft) | H(%sqft)
+  // Criterion in formulas is the cell reference B10 / B11 (the workspace name value)
+
+  function makeKpiRow(label: string, sheetRow: number, isTotal: boolean): AoaCell[] {
+    const bRef = `B${sheetRow}`;  // cell reference to workspace name
+
+    let cTotal: AoaCell, dOcc: AoaCell, fSqFt: AoaCell, gOccSqFt: AoaCell;
+
+    if (isTotal) {
+      const above1 = sheetRow - 2;
+      const above2 = sheetRow - 1;
+      cTotal   = boldFormulaCell(`C${above1}+C${above2}`, "#,##0", dd.total + po.total);
+      dOcc     = boldFormulaCell(`D${above1}+D${above2}`, "#,##0", dd.occupied + po.occupied);
+      fSqFt    = boldFormulaCell(`F${above1}+F${above2}`, "#,##0", dd.totalSqFt + po.totalSqFt);
+      gOccSqFt = boldFormulaCell(`G${above1}+G${above2}`, "#,##0", dd.occupiedSqFt + po.occupiedSqFt);
+    } else {
+      // COUNTIF/SUMIF using the workspace name cell (B10 or B11) as criterion — exact match
+      cTotal   = formulaCell(`COUNTIF(${sheetRef(p3, `${typeLetter}:${typeLetter}`)},${bRef})`, "#,##0", undefined, label === "Dedicated Desk" ? dd.total : po.total);
+      dOcc     = formulaCell(`COUNTIFS(${sheetRef(p3, `${typeLetter}:${typeLetter}`)},${bRef},${sheetRef(p3, `${statusLetter}:${statusLetter}`)},"Occupied")`, "#,##0", undefined, label === "Dedicated Desk" ? dd.occupied : po.occupied);
+      fSqFt    = formulaCell(`SUMIF(${sheetRef(p3, `${typeLetter}:${typeLetter}`)},${bRef},${sheetRef(p3, `${sqftLetter}:${sqftLetter}`)})`, "#,##0", undefined, label === "Dedicated Desk" ? dd.totalSqFt : po.totalSqFt);
+      gOccSqFt = formulaCell(`SUMIFS(${sheetRef(p3, `${sqftLetter}:${sqftLetter}`)},${sheetRef(p3, `${typeLetter}:${typeLetter}`)},${bRef},${sheetRef(p3, `${statusLetter}:${statusLetter}`)},"Occupied")`, "#,##0", undefined, label === "Dedicated Desk" ? dd.occupiedSqFt : po.occupiedSqFt);
+    }
+
+    const eSpacePct = isTotal
+      ? boldFormulaCell(`IF(C${sheetRow}>0,D${sheetRow}/C${sheetRow},"")`, "0.0%")
+      : formulaCell(`IF(C${sheetRow}>0,D${sheetRow}/C${sheetRow},"")`, "0.0%");
+    const hSqFtPct  = isTotal
+      ? boldFormulaCell(`IF(F${sheetRow}>0,G${sheetRow}/F${sheetRow},"")`, "0.0%")
+      : formulaCell(`IF(F${sheetRow}>0,G${sheetRow}/F${sheetRow},"")`, "0.0%");
+
+    const labelCell_ = isTotal
+      ? boldCell(label)
+      : { v: label, t: "s", s: labelCell(label).s };
+
+    return [null, labelCell_, cTotal, dOcc, eSpacePct, fSqFt, gOccSqFt, hSqFtPct];
   }
-  function getMetricRow(key: string): number | null {
-    return metrics.labelRowIdx.get(key) ?? metrics.labelRowIdx.get(key.toLowerCase()) ?? null;
+
+  // ── Parse Monthly Metrics for 2024 per-month counts ─────────────────────
+  // Monthly Metrics has count-based data (# contracts, flex, mail, mtg hours) per month
+  interface MonthlyMetricsRow { poCount: number; ddCount: number; flexCount: number; mailCount: number; mtgHours: number; totalContracts: number; }
+  const mmData = new Map<string, MonthlyMetricsRow>();
+
+  const mmSheetName = wb.SheetNames.find((n) => n === "Monthly Metrics" || /monthly.?metrics/i.test(n));
+  if (mmSheetName) {
+    const mmWs = wb.Sheets[mmSheetName];
+    const mmRows: (CellValue[])[] = XLSX.utils.sheet_to_json(mmWs, { header: 1, defval: null, raw: true }) as (CellValue[])[];
+    const mmHeader = mmRows[0] ?? [];
+    const mmLookup = new Map<string, CellValue[]>();
+    for (let r = 1; r < mmRows.length; r++) {
+      const lbl = str(mmRows[r][0]).trim().toLowerCase();
+      if (lbl) mmLookup.set(lbl, mmRows[r] as CellValue[]);
+    }
+    const mailKeysMM = [
+      "basic mailbox package", "club 25n mailbox package", "digital mailbox package",
+      "virtual office package", "personal mail assistant", "virtual office plus package",
+      "club 25n", "virtual mail service",
+    ];
+    for (let c = 1; c < mmHeader.length; c++) {
+      const raw = mmHeader[c];
+      const monthCode = isExcelSerial(raw) ? serialToMonthCode(raw as number) : str(raw);
+      if (!monthCode) continue;
+      const n = (key: string) => Math.round(num((mmLookup.get(key) ?? [])[c]) ?? 0);
+      const mailCount = mailKeysMM.reduce((sum, k) => sum + n(k), 0);
+      // Total contracts = sum of all rows that represent individual client/service counts
+      const contractKeys = [
+        "private office", "dedicated plus space", "dedicated space",
+        "flex income", "basic mailbox package", "club 25n mailbox package",
+        "digital mailbox package", "virtual office package", "personal mail assistant",
+        "virtual office plus package", "it services", "phone",
+        "club 25n", "virtual mail service",
+      ];
+      const totalContracts = contractKeys.reduce((sum, k) => sum + n(k), 0);
+      mmData.set(monthCode, {
+        poCount: n("private office"),
+        ddCount: n("dedicated plus space") || n("dedicated space"),
+        flexCount: n("flex income"),
+        mailCount,
+        mtgHours: n("recurring & promo meeting room hours"),
+        totalContracts,
+      });
+    }
   }
 
-  const poMetrics = getMetric("Private Office");
-  const ddMetrics = getMetric("Dedicated Plus Space");
-  const flexMetrics = getMetric("Flex Income");
-  const hoursMetrics = getMetric("Recurring & Promo Meeting Room Hours");
+  // ── Parse historical snapshot rows from original P.1 ─────────────────────
+  // Historical rows (pre-2024) are copied verbatim from original P.1 snapshot
+  const origP1SheetName = wb.SheetNames.find((n) => n.startsWith("P.1"));
+  const historicalSnapRows: AoaCell[][] = [];
 
-  const mailKeys = [
-    "Basic Mailbox Package",
-    "Club 25N Mailbox Package",
-    "Digital Mailbox Package",
-    "Virtual Office Package",
-    "Personal Mail Assistant",
-    "Virtual Office Plus Package",
-  ];
-  const mailArrays = mailKeys.map((k) => getMetric(k));
+  if (origP1SheetName) {
+    const origWs = wb.Sheets[origP1SheetName];
+    const origRows: (CellValue[])[] = XLSX.utils.sheet_to_json(origWs, { header: 1, defval: null, raw: false }) as (CellValue[])[];
+    let snapStart = -1;
+    for (let i = 0; i < origRows.length; i++) {
+      if (/12 week|snapshot/i.test(str(origRows[i][0]))) { snapStart = i; break; }
+    }
+    if (snapStart >= 0) {
+      // Skip section header + column header row
+      for (let i = snapStart + 2; i < origRows.length; i++) {
+        const monthCode = str(origRows[i][0]);
+        if (!monthCode || /average/i.test(monthCode)) break;
+        // Only include rows NOT in our current year (already in mmData / sales.monthCodes)
+        if (!mmData.has(monthCode) && !sales.monthCodes.includes(monthCode)) {
+          const r = origRows[i];
+          const pOccSpaces = str(r[1]).replace(/%/g, "").trim();
+          const pOccSqFt   = str(r[2]).replace(/%/g, "").trim();
+          historicalSnapRows.push([
+            null,
+            dataCell(monthCode),
+            dataCell(pOccSpaces ? parseFloat(pOccSpaces) / 100 : null, "0%"),
+            dataCell(pOccSqFt   ? parseFloat(pOccSqFt)   / 100 : null, "0%"),
+            dataCell(num(r[3]) ?? null, "#,##0"),
+            dataCell(num(r[4]) ?? null, "#,##0"),
+            dataCell(num(r[5]) ?? null, "#,##0"),
+            dataCell(r[6] != null && str(r[6]).trim() !== "" && str(r[6]).trim() !== "-" ? num(r[6]) : null, "#,##0"),
+            dataCell(num(r[7]) ?? null, "$#,##0"),
+          ]);
+        }
+      }
+    }
+  }
 
-  const mtgRevenueByMonth = lookupByLabel.get("total meeting space rental");
-  const mtgRevenueLabel = "total meeting space rental";
-  const mtgRevenueRow = lookupRowIdx.get(mtgRevenueLabel) ?? null;
-
-  // ── Snapshot rows (formula-based if metrics sheet available) ──────────────
+  // ── Build 2024 snapshot rows from Monthly Metrics ─────────────────────────
+  const SNAPSHOT_FIRST_ROW = 19 + historicalSnapRows.length;
   const snapshotRows: AoaCell[][] = [];
-  const snapStartDataRow = 18; // 1-indexed row where first snapshot data row will be in P.1
+  const totalSpaces = dd.total + po.total;
+  const totalSqFt   = dd.totalSqFt + po.totalSqFt;
+  const mtgRevVals  = sales.lookupByLabel.get("total meeting space rental") ?? [];
 
-  for (let i = 0; i < metrics.monthCodes.length; i++) {
-    const monthCode = metrics.monthCodes[i];
-    const poCount = Math.round(poMetrics[i] ?? 0);
-    const ddCount = Math.round(ddMetrics[i] ?? 0);
-    const occupiedCount = poCount + ddCount;
-    const occupancyPct = totalSpaces > 0 ? occupiedCount / totalSpaces : 0;
+  // Only include months up to currentMonthIdx (skip future months with no MM data)
+  for (let i = 0; i <= currentMonthIdx; i++) {
+    const monthCode = sales.monthCodes[i];
+    const isCurrent = i === currentMonthIdx;
+    const rowIdx = historicalSnapRows.length + i;
+    const outputRow = 19 + rowIdx;
+
+    const mm = mmData.get(monthCode);
+    const poCount  = mm?.poCount  ?? 0;
+    const ddCount  = mm?.ddCount  ?? 0;
+    const contracts = mm?.totalContracts ?? (poCount + ddCount);
+    const occPct = totalSpaces > 0 ? (poCount + ddCount) / totalSpaces : 0;
     const poOccSqFt = po.total > 0 ? (poCount / po.total) * po.totalSqFt : 0;
     const ddOccSqFt = dd.total > 0 ? (ddCount / dd.total) * dd.totalSqFt : 0;
     const sqFtPct = totalSqFt > 0 ? (poOccSqFt + ddOccSqFt) / totalSqFt : 0;
-    const flexCount = Math.round(flexMetrics[i] ?? 0);
-    const mailCount = mailArrays.reduce((sum, arr) => sum + Math.round(arr[i] ?? 0), 0);
-    const hours = hoursMetrics[i] ?? 0;
-    const salesIdx = sales.monthCodes.indexOf(monthCode);
-    const meetingRev = salesIdx >= 0 ? (mtgRevenueByMonth?.[salesIdx] ?? 0) : 0;
+    const flexCount = mm?.flexCount  ?? 0;
+    const mailCount = mm?.mailCount  ?? 0;
+    const mtgHours  = mm?.mtgHours   ?? 0;
+    const mtgRev    = (mtgRevVals[i] ?? 0) as number;
 
-    const rowIdx = i; // for alternating color
-
-    // Use formulas if we have the metrics sheet name; else fall back to values
-    const msn = metrics.sheetName;
-    const poRow = getMetricRow("Private Office");
-    const ddRow = getMetricRow("Dedicated Plus Space");
-    const flexRow = getMetricRow("Flex Income");
-    const hoursRow = getMetricRow("Recurring & Promo Meeting Room Hours");
-
-    // For the snapshot % and count cells, we reference the P.3 totals via hardcoded formulas
-    // rather than metric sheet, because metric sheet only has count by type not total spaces.
-    // The occupancy % = (PO occupied + DD occupied) / (PO total + DD total)
-    // We express this using numeric references to the KPI table cells (rows 9,10,11 in P.1):
-    // Row 9 = Dedicated Desk row, Row 10 = Private Office row, Row 11 = Total row
-    // Col D=occupied(3), Col C=total(2) — but P.1 itself uses formulas for those too.
-    // Simplest clean approach: use metric sheet references for counts, P.3 formulas for totals.
-
-    let poCell: AoaCell, ddCell: AoaCell, contCell: AoaCell;
-    let occPctCell: AoaCell, sqFtPctCell: AoaCell;
-    let flexCell: AoaCell, hoursCell: AoaCell;
-    let meetRevCell: AoaCell;
-    // Mail: sum of multiple rows — use computed value (too complex for clean formula chain)
-    const mailCell = dataCell(mailCount, "#,##0", rowIdx);
-
-    if (msn && poRow && ddRow) {
-      const poColLtr = colLetter(metrics.colIndices[i] ?? (i + 1));
-      poCell = formulaCell(sheetRef(msn, cellAddr(metrics.colIndices[i] ?? i, poRow)), "#,##0", rowIdx);
-      ddCell = formulaCell(sheetRef(msn, cellAddr(metrics.colIndices[i] ?? i, ddRow)), "#,##0", rowIdx);
-      // contracts = PO + DD
-      const p1Row = snapStartDataRow + i;
-      contCell = { f: `B${p1Row}+C${p1Row}`, t: "n", s: dataCell(occupiedCount, "#,##0", rowIdx).s };
-      // occupancy % = contracts / total spaces (KPI table row 11 col C)
-      occPctCell = { f: `D${p1Row}/11`, t: "n", s: dataCell(occupancyPct, "0.0%", rowIdx).s, z: "0.0%" };
-      // sqft % = approx via computed value (complex cross-reference, use value)
-      sqFtPctCell = dataCell(sqFtPct, "0.0%", rowIdx);
+    let bCell: AoaCell, cCell: AoaCell, dCell: AoaCell;
+    if (isCurrent) {
+      bCell = { f: "B2",  v: monthCode, t: "s", s: dataCell(monthCode, undefined, rowIdx).s };
+      cCell = { f: "E12", v: occPct,    t: "n", s: dataCell(occPct, "0%", rowIdx).s, z: "0%" };
+      dCell = { f: "H12", v: sqFtPct,   t: "n", s: dataCell(sqFtPct, "0%", rowIdx).s, z: "0%" };
     } else {
-      poCell = dataCell(poCount, "#,##0", rowIdx);
-      ddCell = dataCell(ddCount, "#,##0", rowIdx);
-      contCell = dataCell(occupiedCount, "#,##0", rowIdx);
-      occPctCell = dataCell(occupancyPct, "0.0%", rowIdx);
-      sqFtPctCell = dataCell(sqFtPct, "0.0%", rowIdx);
-    }
-
-    if (msn && flexRow) {
-      flexCell = formulaCell(sheetRef(msn, cellAddr(metrics.colIndices[i] ?? i, flexRow)), "#,##0", rowIdx);
-    } else {
-      flexCell = dataCell(flexCount, "#,##0", rowIdx);
-    }
-    if (msn && hoursRow) {
-      hoursCell = formulaCell(sheetRef(msn, cellAddr(metrics.colIndices[i] ?? i, hoursRow)), "#,##0.0", rowIdx);
-    } else {
-      hoursCell = dataCell(hours, "#,##0.0", rowIdx);
-    }
-
-    // Meeting revenue: reference P.2 (which already references Sales By Month)
-    if (mtgRevenueRow && salesIdx >= 0) {
-      // P.2 has same row structure as Sales By Month for this label
-      meetRevCell = formulaCell(sheetRef(p2SheetName, cellAddr(currentMonthCol, mtgRevenueRow)), "$#,##0", rowIdx);
-    } else {
-      meetRevCell = dataCell(meetingRev, "$#,##0", rowIdx);
+      bCell = dataCell(monthCode, undefined, rowIdx);
+      cCell = dataCell(occPct,  "0%", rowIdx);
+      dCell = dataCell(sqFtPct, "0%", rowIdx);
     }
 
     snapshotRows.push([
-      dataCell(monthCode, undefined, rowIdx),
-      occPctCell,
-      sqFtPctCell,
-      contCell,
-      flexCell,
-      mailCell,
-      hoursCell,
-      meetRevCell,
+      null,
+      bCell,
+      cCell,
+      dCell,
+      dataCell(contracts, "#,##0", rowIdx),
+      dataCell(flexCount, "#,##0", rowIdx),
+      dataCell(mailCount, "#,##0", rowIdx),
+      dataCell(mtgHours || null, "#,##0", rowIdx),
+      isCurrent
+        ? { f: sheetRef(p2SheetName, `${currentMonthP2ColLetter}16`), v: mtgRev, t: "n", s: dataCell(mtgRev, "$#,##0", rowIdx).s, z: "$#,##0" }
+        : dataCell(mtgRev, "$#,##0", rowIdx),
     ]);
   }
 
-  // Averages row — use AVERAGE formulas over snapshot range
-  const snapStart = snapStartDataRow;
-  const snapEnd = snapStart + snapshotRows.length - 1;
-  const avgRow: AoaCell[] = [boldCell("Average")];
-  const avgCols = ["B","C","D","E","F","G","H","I"];
-  for (const c of avgCols) {
-    if (snapshotRows.length > 0) {
-      avgRow.push(avgCell(`AVERAGE(${c}${snapStart}:${c}${snapEnd})`));
-    } else {
-      avgRow.push(boldCell(null));
-    }
+  // Averages row — spans all snapshot rows (historical + 2024)
+  const allSnapshotCount = historicalSnapRows.length + snapshotRows.length;
+  const snapStart2 = 19;
+  const snapEnd2 = 19 + allSnapshotCount - 1;
+  const avgRow: AoaCell[] = [null, boldCell("Average")];
+  const avgCols = ["C","D","E","F","G","H","I"];
+  for (const col of avgCols) {
+    avgRow.push(boldFormulaCell(`AVERAGE(${col}${snapStart2}:${col}${snapEnd2})`));
   }
-
-  // ── KPI table rows (P.3 COUNTIFS formulas) ────────────────────────────────
-  // Row positions in output sheet (1-indexed): 9=DD, 10=PO, 11=Total
-  // Cols: B=workspace label, C=# spaces, D=occupied, E=% spaces, F=total sqft, G=occ sqft, H=% sqft
-
-  function makeKpiRow(label: string, typePattern: string, isTotal: boolean, sheetRow: number): AoaCell[] {
-    const p3Range = `${typeLetter}:${typeLetter}`;
-    const statusRange = `${statusLetter}:${statusLetter}`;
-    const sqftRange = `${sqftLetter}:${sqftLetter}`;
-
-    let totalSpacesF: AoaCell, occupiedF: AoaCell, totalSqFtF: AoaCell, occSqFtF: AoaCell;
-    if (isTotal) {
-      // Total row sums the two above it
-      totalSpacesF = { f: `C${sheetRow-2}+C${sheetRow-1}`, t: "n", s: boldCell(totalSpaces, "#,##0").s, z: "#,##0" };
-      occupiedF    = { f: `D${sheetRow-2}+D${sheetRow-1}`, t: "n", s: boldCell(totalOccupied, "#,##0").s, z: "#,##0" };
-      totalSqFtF   = { f: `F${sheetRow-2}+F${sheetRow-1}`, t: "n", s: boldCell(totalSqFt, "#,##0").s, z: "#,##0" };
-      occSqFtF     = { f: `G${sheetRow-2}+G${sheetRow-1}`, t: "n", s: boldCell(totalOccSqFt, "#,##0").s, z: "#,##0" };
-    } else {
-      totalSpacesF = { f: `COUNTIF(${sheetRef(p3, p3Range)},"*${typePattern}*")`, t: "n", s: dataCell(0, "#,##0").s, z: "#,##0" };
-      occupiedF    = { f: `COUNTIFS(${sheetRef(p3, p3Range)},"*${typePattern}*",${sheetRef(p3, statusRange)},"Occup*")`, t: "n", s: dataCell(0, "#,##0").s, z: "#,##0" };
-      totalSqFtF   = { f: `SUMIF(${sheetRef(p3, p3Range)},"*${typePattern}*",${sheetRef(p3, sqftRange)})`, t: "n", s: dataCell(0, "#,##0").s, z: "#,##0" };
-      occSqFtF     = { f: `SUMIFS(${sheetRef(p3, sqftRange)},${sheetRef(p3, p3Range)},"*${typePattern}*",${sheetRef(p3, statusRange)},"Occup*")`, t: "n", s: dataCell(0, "#,##0").s, z: "#,##0" };
-    }
-    const occPctF = { f: `IF(C${sheetRow}>0,D${sheetRow}/C${sheetRow},"")`, t: "n", s: (isTotal ? boldCell(0) : dataCell(0)).s, z: "0.0%" };
-    const sqPctF  = { f: `IF(F${sheetRow}>0,G${sheetRow}/F${sheetRow},"")`, t: "n", s: (isTotal ? boldCell(0) : dataCell(0)).s, z: "0.0%" };
-
-    const rowStyle = isTotal ? boldCell(label) : labelCell(label);
-    return [rowStyle, navyHeader(null), totalSpacesF, occupiedF, occPctF, totalSqFtF, occSqFtF, sqPctF];
-  }
-
-  // Row 9=DD (sheetRow=9), Row 10=PO (sheetRow=10), Row 11=Total (sheetRow=11)
-  const ddRow = makeKpiRow("Dedicated Desk", "Dedicated", false, 9);
-  const poRow2 = makeKpiRow("Private Office", "Private Office", false, 10);
-  const totalRow = makeKpiRow("Total Spaces", "", true, 11);
-
-  // Revenue cell
-  const revCell: AoaCell = revenueFormula
-    ? { f: revenueFormula, t: "n", s: { font: { bold: true, sz: 14, color: { rgb: NAVY } }, alignment: { horizontal: "left" } }, z: "$#,##0" }
-    : { v: 0, t: "n", s: { font: { bold: true, sz: 14 } }, z: "$#,##0" };
 
   return [
     // Row 1: Title
     [goldTitle(`25N COWORKING ${occ.location.toUpperCase()} DASHBOARD`)],
     // Row 2: Report month
-    [{ v: reportMonthCode, t: "s", s: { font: { bold: true, sz: 11, color: { rgb: NAVY } } } }],
+    [null, { v: reportMonthCode, t: "s", s: { font: { bold: true, sz: 11, color: { rgb: NAVY } } } }],
     // Row 3: blank
     [],
-    // Row 4: Revenue
-    [revCell],
+    // Row 4: Revenue — label in col B, value formula in col H
+    [
+      null,
+      { v: "Sales (For the month)", t: "s", s: { font: { bold: true, color: { rgb: NAVY } } } },
+      null, null, null, null, null,
+      { f: revFormula, v: 0, t: "n", s: { font: { bold: true, sz: 14, color: { rgb: NAVY } }, alignment: { horizontal: "left" } }, z: "$#,##0" },
+    ],
     // Row 5: blank
     [],
     // Row 6: Section header
     [sectionHeader("KEY PERFORMANCE INDICATORS - 25N COWORKING")],
     // Row 7: blank
     [],
-    // Row 8: KPI column headers
+    // Row 8: "CURRENT OCCUPANCY" sub-header (matches original)
+    [sectionHeader("CURRENT OCCUPANCY")],
+    // Row 9: KPI column headers
     [
-      navyHeader(""),
+      null,
       navyHeader("Workspace"),
       navyHeader("# of Spaces"),
       navyHeader("Occupied"),
@@ -631,23 +594,21 @@ function buildP1Sheet(
       navyHeader("Occupied"),
       navyHeader("% of Square Feet"),
     ],
-    // Row 9: Dedicated Desk
-    ddRow,
-    // Row 10: Private Office
-    poRow2,
-    // Row 11: Total
-    totalRow,
-    // Row 12-13: blank
+    // Row 10: Dedicated Desk
+    makeKpiRow("Dedicated Desk", 10, false),
+    // Row 11: Private Office
+    makeKpiRow("Private Office", 11, false),
+    // Row 12: Total Spaces
+    makeKpiRow("Total Spaces", 12, true),
+    // Rows 13-15: blank
+    [], [], [],
+    // Row 16: Snapshot section header
+    [sectionHeader("12 Week Snapshot")],
+    // Row 17: blank (to match original "12 Week Snapshot" → blank → headers)
     [],
-    [],
-    // Row 14: 12-month section header
-    [sectionHeader("12 MONTH SNAPSHOT")],
-    // Row 15: blank
-    [],
-    // Row 16: blank
-    [],
-    // Row 17: snapshot column headers
+    // Row 18: Snapshot column headers
     [
+      null,
       navyHeader("Month"),
       navyHeader("Occupied % of Total Spaces"),
       navyHeader("Occupied % of Total Square Feet"),
@@ -657,73 +618,181 @@ function buildP1Sheet(
       navyHeader("Recurring & Promo Meeting Hours Sold"),
       navyHeader("Meeting Hours Sold $"),
     ],
-    // Rows 18+: snapshot data
+    // Rows 19+: historical snapshot data then 2024 months
+    ...historicalSnapRows,
     ...snapshotRows,
-    // Last row: averages
+    // Last: averages
     avgRow,
   ];
 }
 
-// ─── P.2 Monthly Income Sheet ─────────────────────────────────────────────────
+// ─── P.2 Monthly Income Sheet — Condensed 16-row Summary ─────────────────────
 
 function buildP2Sheet(sales: SalesByMonthData): AoaCell[][] {
-  const { sheetName: srcName, rows, headerRowIdx, monthColIndices, monthCodes } = sales;
-  const output: AoaCell[][] = [];
+  const { sheetName: srcName, monthColIndices, monthCodes, lookupRowIdx } = sales;
+  const numMonths = monthColIndices.length;
 
-  // Pre-header rows
-  for (let i = 0; i < headerRowIdx; i++) {
-    output.push(
-      rows[i].map((cell): AoaCell => {
-        if (isExcelSerial(cell)) return serialToMonthCode(cell as number);
-        const n = num(cell);
-        return n !== null ? n : str(cell) || null;
-      })
-    );
+  // Month column letters in OUTPUT sheet:
+  // Source month at 0-based col j → P.2 output col j+1
+  // (labels in col B, months start at col C)
+  const firstMonthOutputCol = 2;  // col C (0-based index 2)
+  const lastMonthOutputColLetter = colLetter(firstMonthOutputCol + numMonths - 1);
+  const annualOutputColLetter = colLetter(firstMonthOutputCol + numMonths);
+
+  // Month column name lookup
+  const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+
+  // Helper: formula referencing source sheet at a specific row + month column
+  function srcFormula(sourceRow1: number, monthIdx: number): string {
+    return sheetRef(srcName, cellAddr(monthColIndices[monthIdx], sourceRow1));
   }
 
-  // Header row — month columns as "Mon-YY" strings, styled navy
-  const headerRow = rows[headerRowIdx];
-  const outHeader: AoaCell[] = [];
-  for (let j = 0; j < headerRow.length; j++) {
-    const midx = monthColIndices.indexOf(j);
-    if (midx >= 0) {
-      outHeader.push(navyHeader(monthCodes[midx]));
-    } else if (j === 0) {
-      outHeader.push(navyHeader(str(headerRow[j]) || "Sales Comparative by Month"));
-    } else {
-      const cell = headerRow[j];
-      outHeader.push(navyHeader(isExcelSerial(cell) ? serialToMonthCode(cell as number) : str(cell) || null));
-    }
-  }
-  output.push(outHeader);
-
-  // Data rows — month value cells become cross-sheet formula references
-  for (let i = headerRowIdx + 1; i < rows.length; i++) {
-    const row = rows[i];
-    const label = str(row[0]);
-    const srcRow = i + 1; // 1-indexed row in source Sales By Month sheet
-    const rowIdx = i - headerRowIdx - 1; // for alternating color
-    const isTotalRow = /total|subtotal/i.test(label);
-
-    const outRow: AoaCell[] = [];
-    for (let j = 0; j < headerRow.length; j++) {
-      if (j === 0) {
-        outRow.push(isTotalRow ? boldCell(label || null) : labelCell(label, rowIdx));
-      } else if (monthColIndices.indexOf(j) >= 0) {
-        // Formula reference to source sheet
-        const f = sheetRef(srcName, cellAddr(j, srcRow));
-        outRow.push(isTotalRow
-          ? { f, t: "n", s: boldCell(0, "$#,##0").s, z: "$#,##0" }
-          : formulaCell(f, "$#,##0", rowIdx));
+  // Build a single-source category row (one source row → per-month formulas)
+  function categoryRow(
+    outputRow1: number,
+    label: string,
+    sourceRow1: number | null,
+    isBold = false,
+  ): AoaCell[] {
+    const cols: AoaCell[] = [
+      null,
+      isBold ? boldCell(label) : labelCell(label),
+    ];
+    for (let i = 0; i < numMonths; i++) {
+      if (sourceRow1 != null) {
+        cols.push(formulaCell(srcFormula(sourceRow1, i), "$#,##0"));
       } else {
-        const n = num(row[j]);
-        const cellVal = (n ?? str(row[j])) || null;
-        const cellFmt = n != null ? "$#,##0" : undefined;
-        outRow.push(isTotalRow ? boldCell(cellVal, cellFmt) : dataCell(cellVal, cellFmt, rowIdx));
+        cols.push(dataCell(0, "$#,##0"));
       }
     }
-    output.push(outRow);
+    // Annual SUM
+    const firstCol = colLetter(firstMonthOutputCol);
+    const lastCol = lastMonthOutputColLetter;
+    cols.push(
+      isBold
+        ? boldFormulaCell(`SUM(${firstCol}${outputRow1}:${lastCol}${outputRow1})`, "$#,##0")
+        : formulaCell(`SUM(${firstCol}${outputRow1}:${lastCol}${outputRow1})`, "$#,##0")
+    );
+    return cols;
   }
+
+  // "Recurring Revenue" = TOTAL INCOME minus the other 9 separately-listed categories
+  // This guarantees: SUM(rows 3-12) = TOTAL INCOME (no double-counting)
+  function recurringRow(outputRow1: number): AoaCell[] {
+    const totalIncomeRow = lookupRowIdx.get("total income") ?? null;
+    // The 9 categories that are listed separately in P.2 rows 4-12
+    const subtractKeys = [
+      "total meeting space rental",  // Meeting Rooms
+      "total events revenue",        // Special Events
+      "registration set up",         // Registrations
+      "daily space",                 // Daily Space
+      "printing",                    // Printing
+      "furniture enhancements",      // Furniture Enhancements
+      "tenant improvement",          // Tenant Improvement
+      "sponsorship income",          // Sponsorship
+      "miscellaneous income",        // Other Miscellaneous (specific line item)
+    ];
+    const subtractRows = subtractKeys
+      .map((k) => lookupRowIdx.get(k))
+      .filter((r): r is number => r != null);
+
+    const cols: AoaCell[] = [null, labelCell("Recurring Revenue")];
+    for (let i = 0; i < numMonths; i++) {
+      const srcCol = monthColIndices[i];
+      if (totalIncomeRow) {
+        const totalRef = sheetRef(srcName, cellAddr(srcCol, totalIncomeRow));
+        const subParts = subtractRows.map((r) => sheetRef(srcName, cellAddr(srcCol, r)));
+        const formula = subParts.length > 0
+          ? `${totalRef}-${subParts.join("-")}`
+          : totalRef;
+        cols.push(formulaCell(formula, "$#,##0"));
+      } else {
+        // Fallback when TOTAL INCOME row not found
+        const parts = ["total membership income", "total workspace rental", "total package revenue"]
+          .map((k) => lookupRowIdx.get(k))
+          .filter((r): r is number => r != null)
+          .map((r) => sheetRef(srcName, cellAddr(srcCol, r)));
+        cols.push(parts.length > 0 ? formulaCell(parts.join("+"), "$#,##0") : dataCell(0, "$#,##0"));
+      }
+    }
+    const firstCol = colLetter(firstMonthOutputCol);
+    cols.push(formulaCell(`SUM(${firstCol}${outputRow1}:${lastMonthOutputColLetter}${outputRow1})`, "$#,##0"));
+    return cols;
+  }
+
+  // SUM formula row (Total / Total with Relief)
+  function sumRow(outputRow1: number, label: string, sumFrom: number, sumTo: number): AoaCell[] {
+    const cols: AoaCell[] = [null, boldCell(label)];
+    for (let i = 0; i < numMonths; i++) {
+      const col = colLetter(firstMonthOutputCol + i);
+      cols.push(boldFormulaCell(`SUM(${col}${sumFrom}:${col}${sumTo})`, "$#,##0"));
+    }
+    const annualCol = annualOutputColLetter;
+    cols.push(boldFormulaCell(`SUM(${colLetter(firstMonthOutputCol)}${outputRow1}:${lastMonthOutputColLetter}${outputRow1})`, "$#,##0"));
+    return cols;
+  }
+
+  // Category definitions in order (matches original P.2)
+  const categories: Array<{ label: string; key?: string; special?: string }> = [
+    { label: "Recurring Revenue", special: "recurring" },
+    { label: "Meeting Rooms",          key: "total meeting space rental" },
+    { label: "Special Events",         key: "total events revenue" },
+    { label: "Registrations",          key: "registration set up" },
+    { label: "Daily Space",            key: "daily space" },
+    { label: "Printing",               key: "printing" },
+    { label: "Furniture Enhancements", key: "furniture enhancements" },
+    { label: "Tenant Improvement",     key: "tenant improvement" },
+    { label: "Sponsorship",            key: "sponsorship income" },
+    { label: "Other Miscellaneous",    key: "miscellaneous income" },
+  ];
+
+  // Discount rows: look for "discounts given", "discounts", "discounts - other"
+  const discountCandidates = ["discounts given", "discounts", "discounts - other"];
+  const discountSourceRows = discountCandidates
+    .map((k) => lookupRowIdx.get(k))
+    .filter((r): r is number => r != null);
+
+  // Build output AOA
+  const output: AoaCell[][] = [];
+
+  // Row 1: "MONTHLY TOTAL" header in col A
+  output.push([{ v: "MONTHLY TOTAL", t: "s", s: sectionHeader("MONTHLY TOTAL").s }]);
+
+  // Row 2: "SALES COMPARATIVE BY MONTH" + month name headers + "Annual"
+  const headerRow: AoaCell[] = [null, navyHeader("SALES COMPARATIVE BY MONTH")];
+  for (let i = 0; i < numMonths; i++) {
+    // Parse month name from code (e.g. "Aug-24" → "August")
+    const code = monthCodes[i]; // "Aug-24"
+    const abbr = code.split("-")[0];
+    const monthName = MONTH_NAMES.find((m) => m.startsWith(abbr)) ?? code;
+    headerRow.push(navyHeader(monthName));
+  }
+  headerRow.push(navyHeader("Annual"));
+  output.push(headerRow);
+
+  // Rows 3-12: 10 summary categories
+  for (let ci = 0; ci < categories.length; ci++) {
+    const cat = categories[ci];
+    const rowNum = 3 + ci;  // 1-indexed output row
+    if (cat.special === "recurring") {
+      output.push(recurringRow(rowNum));
+    } else {
+      const sourceRow = cat.key ? (lookupRowIdx.get(cat.key) ?? null) : null;
+      output.push(categoryRow(rowNum, cat.label, sourceRow));
+    }
+  }
+
+  // Row 13: Total = SUM(rows 3-12)
+  output.push(sumRow(13, "Total", 3, 12));
+
+  // Row 14: Discounts Given (first discount row or zero)
+  output.push(categoryRow(14, "Discounts Given", discountSourceRows[0] ?? null));
+
+  // Row 15: Discounts Given (second discount row or zero)
+  output.push(categoryRow(15, "Discounts Given", discountSourceRows[1] ?? null));
+
+  // Row 16: Total with Relief = SUM(rows 13-15)
+  output.push(sumRow(16, "Total with Relief", 13, 15));
 
   return output;
 }
@@ -739,7 +808,9 @@ function buildP4Sheet(wb: XLSX.WorkBook, sales: SalesByMonthData, p2SheetName: s
 
   const { lookupByLabel, lookupRowIdx, currentMonthIdx, monthCodes, monthColIndices } = sales;
   const reportMonthCode = monthCodes[currentMonthIdx];
-  const currentMonthColLetter = colLetter(monthColIndices[currentMonthIdx]);
+
+  // P.2 column letter for current month (source col j → P.2 col j+1)
+  const currentMonthP2ColLetter = colLetter(monthColIndices[currentMonthIdx] + 1);
 
   let headerRowIdx = -1;
   for (let i = 0; i < rows.length; i++) {
@@ -774,9 +845,7 @@ function buildP4Sheet(wb: XLSX.WorkBook, sales: SalesByMonthData, p2SheetName: s
     ]);
   }
 
-  // P.4 output starts at row (output.length + 1) in the worksheet
-  const dataStartOutputRow = output.length + 1; // 1-indexed row of first data row in output
-
+  const dataStartOutputRow = output.length + 1;
   const dataStart = headerRowIdx >= 0 ? headerRowIdx + 1 : 0;
   let dataIdx = 0;
 
@@ -791,23 +860,32 @@ function buildP4Sheet(wb: XLSX.WorkBook, sales: SalesByMonthData, p2SheetName: s
 
     const isTotalRow = /total|subtotal/i.test(label);
     const labelLower = label.toLowerCase().trim();
-    const outputRow = dataStartOutputRow + dataIdx; // 1-indexed row in P.4 output sheet
+    const outputRow = dataStartOutputRow + dataIdx;
     const rowIdx = dataIdx;
 
-    // Budget: reference source P.4 column C (budget column)
-    const srcDataRow = i + 1; // 1-indexed in source P.4 sheet
-    const budgetCell: AoaCell = { f: sheetRef(srcSheetName, `C${srcDataRow}`), t: "n", s: (isTotalRow ? boldCell(0, "$#,##0") : dataCell(0, "$#,##0", rowIdx)).s, z: "$#,##0" };
+    // Budget: reference source P.4 column C (budget values are in the pass-through sheet)
+    const srcDataRow = i + 1;
+    const budgetCell: AoaCell = {
+      f: sheetRef(srcSheetName, `C${srcDataRow}`),
+      v: num(row[2]) ?? 0,
+      t: "n",
+      s: (isTotalRow ? boldCell(0, "$#,##0") : dataCell(0, "$#,##0", rowIdx)).s,
+      z: "$#,##0",
+    };
 
-    // Actual: reference P.2 at current month column for this label's row
+    // Actual: reference P.2 at current month column
     const salesRow = lookupRowIdx.get(labelLower) ?? null;
     let actualCell: AoaCell;
     if (salesRow != null) {
-      // P.2 has the same row structure as Sales By Month (P.2 is built from it)
-      // The P.2 header row occupies the same relative position, so we reference P.2 directly
-      const p2DataRow = salesRow; // P.2 mirrors source row indices
-      actualCell = { f: sheetRef(p2SheetName, `${currentMonthColLetter}${p2DataRow}`), t: "n", s: (isTotalRow ? boldCell(0, "$#,##0") : dataCell(0, "$#,##0", rowIdx)).s, z: "$#,##0" };
+      const actualVal = (lookupByLabel.get(labelLower) ?? [])[currentMonthIdx] ?? 0;
+      actualCell = {
+        f: sheetRef(p2SheetName, `${currentMonthP2ColLetter}${salesRow}`),
+        v: actualVal,
+        t: "n",
+        s: (isTotalRow ? boldCell(0, "$#,##0") : dataCell(0, "$#,##0", rowIdx)).s,
+        z: "$#,##0",
+      };
     } else {
-      // Fall back to computed value
       const monthlyVals = lookupByLabel.get(labelLower);
       const actualVal = monthlyVals != null ? (monthlyVals[currentMonthIdx] ?? null) : null;
       actualCell = isTotalRow ? boldCell(actualVal, "$#,##0") : dataCell(actualVal, "$#,##0", rowIdx);
@@ -816,6 +894,7 @@ function buildP4Sheet(wb: XLSX.WorkBook, sales: SalesByMonthData, p2SheetName: s
     // Variance $: =B{row}-C{row}
     const varDollarCell: AoaCell = {
       f: `B${outputRow}-C${outputRow}`,
+      v: 0,
       t: "n",
       s: (isTotalRow ? boldCell(0, "$#,##0") : dataCell(0, "$#,##0", rowIdx)).s,
       z: "$#,##0",
@@ -824,6 +903,7 @@ function buildP4Sheet(wb: XLSX.WorkBook, sales: SalesByMonthData, p2SheetName: s
     // Variance %: =IF(ABS(C{row})>0,(B{row}-C{row})/ABS(C{row}),"")
     const varPctCell: AoaCell = {
       f: `IF(ABS(C${outputRow})>0,(B${outputRow}-C${outputRow})/ABS(C${outputRow}),"")`,
+      v: 0,
       t: "n",
       s: (isTotalRow ? boldCell(0, "0.0%") : dataCell(0, "0.0%", rowIdx)).s,
       z: "0.0%",
@@ -845,43 +925,39 @@ function buildP4Sheet(wb: XLSX.WorkBook, sales: SalesByMonthData, p2SheetName: s
 // ─── Apply Styles to Sheet ────────────────────────────────────────────────────
 
 function aoaToStyledSheet(aoa: AoaCell[][]): XLSX.WorkSheet {
-  // Build a plain value AOA for xlsx-js-style, then overlay style + formula objects
-  const ws = XLSX.utils.aoa_to_sheet(
-    aoa.map((row) =>
-      row.map((cell) => {
-        if (cell == null || typeof cell !== "object") return cell;
-        const c = cell as StyledCell;
-        if (c.f) return null; // placeholder — formula cells get written below
-        return c.v ?? null;
-      })
-    )
-  );
+  const ws: XLSX.WorkSheet = {};
+  let maxR = 0;
+  let maxC = 0;
 
   for (let r = 0; r < aoa.length; r++) {
-    for (let c = 0; c < aoa[r].length; c++) {
-      const cell = aoa[r][c];
-      if (cell == null || typeof cell !== "object") continue;
-      const sc = cell as StyledCell;
-      const addr = XLSX.utils.encode_cell({ r, c });
+    const row = aoa[r];
+    for (let c = 0; c < row.length; c++) {
+      const cell = row[c];
+      if (cell == null) continue;
 
-      if (!ws[addr]) {
-        ws[addr] = { t: sc.t ?? "s", v: sc.v ?? "" };
-      }
-      if (sc.f) {
-        ws[addr] = { t: sc.t ?? "n", f: sc.f };
-      }
-      if (sc.s) {
-        ws[addr].s = sc.s;
-      }
-      if (sc.z) {
-        ws[addr].z = sc.z;
-      }
-      if (sc.t) {
-        ws[addr].t = sc.t;
+      const addr = XLSX.utils.encode_cell({ r, c });
+      maxR = Math.max(maxR, r);
+      maxC = Math.max(maxC, c);
+
+      if (typeof cell === "string") {
+        ws[addr] = { t: "s", v: cell };
+      } else if (typeof cell === "number") {
+        ws[addr] = { t: "n", v: cell };
+      } else {
+        const sc = cell as StyledCell;
+        if (sc.f) {
+          // CRITICAL: must include v (cached value) for xlsx-js-style to write formula cells
+          ws[addr] = { t: sc.t ?? "n", f: sc.f, v: sc.v ?? 0 };
+        } else {
+          ws[addr] = { t: sc.t ?? "s", v: sc.v ?? "" };
+        }
+        if (sc.s)  ws[addr].s = sc.s;
+        if (sc.z)  ws[addr].z = sc.z;
       }
     }
   }
 
+  ws["!ref"] = XLSX.utils.encode_range({ s: { r: 0, c: 0 }, e: { r: maxR, c: maxC } });
   return ws;
 }
 
@@ -897,7 +973,6 @@ export function generateDashboardExcel(fileBuffer: ArrayBuffer): Buffer {
   const wb = XLSX.read(fileBuffer, { type: "array", cellDates: false });
 
   const sales = parseSalesByMonth(wb);
-  const metrics = parseMonthlyMetrics(wb);
   const occupancyStats = parseOccupancyStats(wb);
 
   const dashNames = {
@@ -907,7 +982,7 @@ export function generateDashboardExcel(fileBuffer: ArrayBuffer): Buffer {
   };
 
   const p2Data = buildP2Sheet(sales);
-  const p1Data = buildP1Sheet(occupancyStats, sales, metrics, dashNames.p2);
+  const p1Data = buildP1Sheet(occupancyStats, sales, dashNames.p2, wb);
   const p4Data = buildP4Sheet(wb, sales, dashNames.p2);
 
   const newWb = XLSX.utils.book_new();
@@ -920,14 +995,19 @@ export function generateDashboardExcel(fileBuffer: ArrayBuffer): Buffer {
     ...wb.SheetNames.filter((n) => !dashSet.has(n)),
   ];
 
+  // P.2 month columns: one per month + label col (B) + annual col + blank col A
+  const p2MonthCols = Array(sales.monthColIndices.length + 2).fill(14);
+  p2MonthCols[0] = 4;   // col A narrow
+  p2MonthCols[1] = 30;  // col B (labels) wider
+
   for (const name of sheetOrder) {
     if (name === dashNames.p1) {
       const ws = aoaToStyledSheet(p1Data);
-      setColWidths(ws, [20, 12, 28, 28, 18, 14, 14, 18, 22]);
+      setColWidths(ws, [4, 30, 14, 14, 12, 16, 14, 12, 16]);
       XLSX.utils.book_append_sheet(newWb, ws, name);
     } else if (name === dashNames.p2) {
       const ws = aoaToStyledSheet(p2Data);
-      setColWidths(ws, [36, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12, 12]);
+      setColWidths(ws, p2MonthCols);
       XLSX.utils.book_append_sheet(newWb, ws, name);
     } else if (name === dashNames.p4) {
       const ws = aoaToStyledSheet(p4Data);
