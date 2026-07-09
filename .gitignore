@@ -41,3 +41,6 @@ yarn-error.log*
 next-env.d.ts
 
 .vercel
+
+# real client data used for local testing — not for version control
+/test-data/

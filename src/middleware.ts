@@ -6,7 +6,8 @@ export async function middleware(request: NextRequest) {
   const token = request.cookies.get("auth")?.value ?? "";
   const authed = await verifySessionToken(token);
 
-  if (!authed && pathname !== "/login" && !pathname.startsWith("/api/auth")) {
+  // /api/generate-month-close uses its own x-internal-key auth
+  if (!authed && pathname !== "/login" && !pathname.startsWith("/api/auth") && pathname !== "/api/generate-month-close" && pathname !== "/api/generate-financial-packet") {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
