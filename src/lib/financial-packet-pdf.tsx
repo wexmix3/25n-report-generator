@@ -262,27 +262,30 @@ function CoverPage({ data }: { data: FinancialPacketData }) {
           <Text style={[s.th, { flex: 1.5, textAlign: "right" }]}>Variance</Text>
         </View>
         {[
-          { label: "Revenue",             li: is.revenue._total, bold: true },
-          { label: "  Workspace Rental",  li: is.revenue.workspace_rental },
-          { label: "  Meeting Space",     li: is.revenue.meeting_space },
-          { label: "  Package Revenue",   li: is.revenue.package_revenue },
-          { label: "Cost of Sales",       li: is.cos._total, bold: true },
-          { label: "Gross Profit",        li: is.gross_profit, bold: true },
-          { label: "Total OPEX",          li: is.opex._total, bold: true },
-          { label: "  Payroll",           li: is.opex.payroll },
-          { label: "  Facilities",        li: is.opex.facilities },
-          { label: "  Insurance",         li: is.opex.insurance },
-          { label: "NOI",                 li: is.net_operating_income, bold: true },
-        ].map(({ label, li, bold }, i) => (
+          { label: "Revenue",             li: is.revenue._total, bold: true, isExpense: false },
+          { label: "  Workspace Rental",  li: is.revenue.workspace_rental, isExpense: false },
+          { label: "  Meeting Space",     li: is.revenue.meeting_space, isExpense: false },
+          { label: "  Package Revenue",   li: is.revenue.package_revenue, isExpense: false },
+          { label: "Cost of Sales",       li: is.cos._total, bold: true, isExpense: true },
+          { label: "Gross Profit",        li: is.gross_profit, bold: true, isExpense: false },
+          { label: "Total OPEX",          li: is.opex._total, bold: true, isExpense: true },
+          { label: "  Payroll",           li: is.opex.payroll, isExpense: true },
+          { label: "  Facilities",        li: is.opex.facilities, isExpense: true },
+          { label: "  Insurance",         li: is.opex.insurance, isExpense: true },
+          { label: "NOI",                 li: is.net_operating_income, bold: true, isExpense: false },
+        ].map(({ label, li, bold, isExpense }, i) => {
+          const favorable = isExpense ? li.actual <= li.budget : li.actual >= li.budget;
+          return (
           <View key={i} style={[s.tRow, i % 2 === 1 ? s.tRowAlt : {}, bold ? s.tRowSub : {}]}>
             <Text style={[bold ? s.tdBold : s.td, { flex: 3 }]}>{label}</Text>
             <Text style={[bold ? s.tdBold : s.td, { flex: 1.5, textAlign: "right" }]}>{fmt$(li.actual)}</Text>
             <Text style={[s.tdGray, { flex: 1.5, textAlign: "right" }]}>{fmt$(li.budget)}</Text>
-            <Text style={[li.actual >= li.budget ? s.tdGreen : s.tdRed, { flex: 1.5, textAlign: "right" }]}>
+            <Text style={[favorable ? s.tdGreen : s.tdRed, { flex: 1.5, textAlign: "right" }]}>
               {variance$(li.actual, li.budget)}
             </Text>
           </View>
-        ))}
+          );
+        })}
       </View>
 
       <Footer location={data.location} month={data.month} />
@@ -295,7 +298,7 @@ function CoverPage({ data }: { data: FinancialPacketData }) {
 function ISPage({ data }: { data: FinancialPacketData }) {
   const is = data.income_statement;
 
-  const rows: { label: string; li: { actual: number; budget: number }; indent?: boolean; bold?: boolean }[] = [
+  const rows: { label: string; li: { actual: number; budget: number }; indent?: boolean; bold?: boolean; isExpense?: boolean }[] = [
     { label: "REVENUE", li: is.revenue._total, bold: true },
     { label: "Workspace Rental", li: is.revenue.workspace_rental, indent: true },
     { label: "Meeting Space", li: is.revenue.meeting_space, indent: true },
@@ -304,22 +307,22 @@ function ISPage({ data }: { data: FinancialPacketData }) {
     { label: "Membership", li: is.revenue.membership, indent: true },
     { label: "Registration & Access", li: is.revenue.registration_access, indent: true },
     { label: "Miscellaneous", li: is.revenue.miscellaneous, indent: true },
-    { label: "COST OF SALES", li: is.cos._total, bold: true },
-    { label: "Direct COS", li: is.cos.direct_cos, indent: true },
-    { label: "Community", li: is.cos.community, indent: true },
+    { label: "COST OF SALES", li: is.cos._total, bold: true, isExpense: true },
+    { label: "Direct COS", li: is.cos.direct_cos, indent: true, isExpense: true },
+    { label: "Community", li: is.cos.community, indent: true, isExpense: true },
     { label: `GROSS PROFIT (${fmtPct(is.gross_profit.margin_pct)})`, li: is.gross_profit, bold: true },
-    { label: "OPERATING EXPENSES", li: is.opex._total, bold: true },
-    { label: "Payroll", li: is.opex.payroll, indent: true },
-    { label: "Facilities", li: is.opex.facilities, indent: true },
-    { label: "Insurance", li: is.opex.insurance, indent: true },
-    { label: "Utilities", li: is.opex.utilities, indent: true },
-    { label: "Marketing", li: is.opex.marketing, indent: true },
-    { label: "Meals & Entertainment", li: is.opex.meals_entertainment, indent: true },
-    { label: "Office Expense", li: is.opex.office_supplies, indent: true },
-    { label: "Technology", li: is.opex.technology, indent: true },
-    { label: "Travel", li: is.opex.travel, indent: true },
-    { label: "Admin / Legal", li: is.opex.admin_legal, indent: true },
-    { label: "Other OPEX", li: is.opex.other, indent: true },
+    { label: "OPERATING EXPENSES", li: is.opex._total, bold: true, isExpense: true },
+    { label: "Payroll", li: is.opex.payroll, indent: true, isExpense: true },
+    { label: "Facilities", li: is.opex.facilities, indent: true, isExpense: true },
+    { label: "Insurance", li: is.opex.insurance, indent: true, isExpense: true },
+    { label: "Utilities", li: is.opex.utilities, indent: true, isExpense: true },
+    { label: "Marketing", li: is.opex.marketing, indent: true, isExpense: true },
+    { label: "Meals & Entertainment", li: is.opex.meals_entertainment, indent: true, isExpense: true },
+    { label: "Office Expense", li: is.opex.office_supplies, indent: true, isExpense: true },
+    { label: "Technology", li: is.opex.technology, indent: true, isExpense: true },
+    { label: "Travel", li: is.opex.travel, indent: true, isExpense: true },
+    { label: "Admin / Legal", li: is.opex.admin_legal, indent: true, isExpense: true },
+    { label: "Other OPEX", li: is.opex.other, indent: true, isExpense: true },
     { label: `NET OPERATING INCOME (${fmtPct(is.net_operating_income.margin_pct)})`, li: is.net_operating_income, bold: true },
   ];
 
@@ -335,16 +338,19 @@ function ISPage({ data }: { data: FinancialPacketData }) {
             <Text style={[s.th, { flex: 1.5, textAlign: "right" }]}>Budget</Text>
             <Text style={[s.th, { flex: 1.5, textAlign: "right" }]}>Variance</Text>
           </View>
-          {rows.map(({ label, li, indent, bold }, i) => (
+          {rows.map(({ label, li, indent, bold, isExpense }, i) => {
+            const favorable = isExpense ? li.actual <= li.budget : li.actual >= li.budget;
+            return (
             <View key={i} style={[s.tRow, i % 2 === 1 && !bold ? s.tRowAlt : {}, bold ? s.tRowSub : {}]}>
               <Text style={[bold ? s.tdBold : s.td, { flex: 3.5, paddingLeft: indent ? 12 : 0 }]}>{label}</Text>
               <Text style={[bold ? s.tdBold : s.td, { flex: 1.5, textAlign: "right" }]}>{fmt$(li.actual)}</Text>
               <Text style={[s.tdGray, { flex: 1.5, textAlign: "right" }]}>{fmt$(li.budget)}</Text>
-              <Text style={[li.actual >= li.budget ? s.tdGreen : s.tdRed, { flex: 1.5, textAlign: "right" }]}>
+              <Text style={[favorable ? s.tdGreen : s.tdRed, { flex: 1.5, textAlign: "right" }]}>
                 {variance$(li.actual, li.budget)}
               </Text>
             </View>
-          ))}
+            );
+          })}
         </View>
       </View>
       <Footer location={data.location} month={data.month} />
