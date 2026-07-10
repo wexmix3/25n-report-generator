@@ -222,7 +222,6 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 function CoverPage({ data }: { data: FinancialPacketData }) {
   const is = data.income_statement;
   const rev = is.revenue._total.actual;
-  const gp = is.gross_profit.actual;
   const noi = is.net_operating_income.actual;
   const ni = is.net_income.actual;
 
@@ -236,10 +235,10 @@ function CoverPage({ data }: { data: FinancialPacketData }) {
           <Text style={s.kpiValue}>{fmt$(rev)}</Text>
           <Text style={s.kpiSub}>vs {fmt$(is.revenue._total.budget)} budget</Text>
         </View>
-        <View style={[s.kpiCard, { backgroundColor: gp >= 0 ? "#14532D" : "#7F1D1D" }]}>
-          <Text style={s.kpiLabel}>Gross Profit</Text>
-          <Text style={s.kpiValue}>{fmt$(gp)}</Text>
-          <Text style={s.kpiSub}>{fmtPct(is.gross_profit.margin_pct)} margin</Text>
+        <View style={[s.kpiCard, { backgroundColor: ni >= 0 ? "#14532D" : "#7F1D1D" }]}>
+          <Text style={s.kpiLabel}>Net Margin</Text>
+          <Text style={s.kpiValue}>{fmtPct(is.net_income.margin_pct)}</Text>
+          <Text style={s.kpiSub}>{fmt$(ni)} net income</Text>
         </View>
         <View style={[s.kpiCard, { backgroundColor: noi >= 0 ? "#14532D" : "#7F1D1D" }]}>
           <Text style={s.kpiLabel}>Net Op. Income</Text>

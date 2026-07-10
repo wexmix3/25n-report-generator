@@ -6,8 +6,9 @@ export async function middleware(request: NextRequest) {
   const token = request.cookies.get("auth")?.value ?? "";
   const authed = await verifySessionToken(token);
 
-  // /api/generate-month-close uses its own x-internal-key auth
-  if (!authed && pathname !== "/login" && !pathname.startsWith("/api/auth") && pathname !== "/api/generate-month-close" && pathname !== "/api/generate-financial-packet") {
+  // These routes use their own x-internal-key auth (called from Python scripts, not the browser)
+  const internalKeyRoutes = ["/api/generate-month-close", "/api/generate-financial-packet", "/api/generate-gl-variance"];
+  if (!authed && pathname !== "/login" && !pathname.startsWith("/api/auth") && !internalKeyRoutes.includes(pathname)) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
