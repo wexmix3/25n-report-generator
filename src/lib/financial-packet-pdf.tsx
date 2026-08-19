@@ -654,7 +654,7 @@ function OccupancyPage({ data }: { data: FinancialPacketData }) {
                   <Text style={[s.td, { flex: 3 }]}>{sp.space_type}</Text>
                   <Text style={[s.td, { flex: 1.5, textAlign: "right" }]}>{sp.total_units}</Text>
                   <Text style={[s.td, { flex: 1.5, textAlign: "right" }]}>{sp.occupied_units}</Text>
-                  <Text style={[s.td, { flex: 1.5, textAlign: "right" }]}>{fmtPct(sp.occupancy_rate)}</Text>
+                  <Text style={[s.td, { flex: 1.5, textAlign: "right" }]}>{fmtPct(sp.occupancy_rate * 100)}</Text>
                   <Text style={[s.td, { flex: 2, textAlign: "right" }]}>{fmt$(sp.monthly_revenue)}</Text>
                 </View>
               ))}
