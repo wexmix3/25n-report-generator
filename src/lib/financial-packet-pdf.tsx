@@ -136,6 +136,15 @@ interface AgingTotals {
 
 interface APVendor { payee_name: string; current: number; d0_30: number; d31_60: number; d61_90: number; over_90: number; }
 
+interface OccupancySpaceType { space_type: string; total_units: number; occupied_units: number; occupancy_rate: number; monthly_revenue: number; }
+interface Occupancy {
+  occupancy_pct?: number;
+  total_members?: number;
+  available_desks?: number;
+  booked_desks?: number;
+  raw?: { space_breakdown?: OccupancySpaceType[] };
+}
+
 export interface FinancialPacketData {
   location: string;
   month: string;
@@ -145,6 +154,7 @@ export interface FinancialPacketData {
   ar_aging?: { customer_count: number; totals: AgingTotals; delinquent_customers: Record<string, { d61_90: number; over_90: number }>; error?: string };
   ap_aging?: { vendor_count: number; totals: AgingTotals; overdue_vendors: Record<string, APVendor>; overdue_count: number; error?: string };
   cash_flow?: CashFlow;
+  occupancy?: Occupancy | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -602,6 +612,61 @@ function APPage({ data }: { data: FinancialPacketData }) {
   );
 }
 
+// ── Page 6: Occupancy ─────────────────────────────────────────────────────────
+
+function OccupancyPage({ data }: { data: FinancialPacketData }) {
+  const occ = data.occupancy;
+  if (!occ) return null;
+  const breakdown = occ.raw?.space_breakdown ?? [];
+
+  return (
+    <Page size="LETTER" style={s.page}>
+      <FixedHeader location={data.location} month={data.month} subtitle="Occupancy" />
+      <View style={{ marginTop: 40 }}>
+        <View style={s.kpiRow}>
+          <View style={s.kpiCard}>
+            <Text style={s.kpiLabel}>Occupancy</Text>
+            <Text style={s.kpiValue}>{fmtPct(occ.occupancy_pct)}</Text>
+          </View>
+          <View style={s.kpiCard}>
+            <Text style={s.kpiLabel}>Total Members</Text>
+            <Text style={s.kpiValue}>{occ.total_members ?? "—"}</Text>
+          </View>
+          <View style={s.kpiCard}>
+            <Text style={s.kpiLabel}>Booked / Available</Text>
+            <Text style={s.kpiValue}>{occ.booked_desks ?? "—"} / {occ.available_desks ?? "—"}</Text>
+          </View>
+        </View>
+
+        {breakdown.length > 0 && (
+          <>
+            <SectionTitle>Occupancy by Space Type</SectionTitle>
+            <View style={s.table}>
+              <View style={s.tHead}>
+                <Text style={[s.th, { flex: 3 }]}>Space Type</Text>
+                <Text style={[s.th, { flex: 1.5, textAlign: "right" }]}>Total</Text>
+                <Text style={[s.th, { flex: 1.5, textAlign: "right" }]}>Occupied</Text>
+                <Text style={[s.th, { flex: 1.5, textAlign: "right" }]}>Occ. %</Text>
+                <Text style={[s.th, { flex: 2, textAlign: "right" }]}>Revenue</Text>
+              </View>
+              {breakdown.map((sp, i) => (
+                <View key={i} style={[s.tRow, i % 2 === 1 ? s.tRowAlt : {}]}>
+                  <Text style={[s.td, { flex: 3 }]}>{sp.space_type}</Text>
+                  <Text style={[s.td, { flex: 1.5, textAlign: "right" }]}>{sp.total_units}</Text>
+                  <Text style={[s.td, { flex: 1.5, textAlign: "right" }]}>{sp.occupied_units}</Text>
+                  <Text style={[s.td, { flex: 1.5, textAlign: "right" }]}>{fmtPct(sp.occupancy_rate)}</Text>
+                  <Text style={[s.td, { flex: 2, textAlign: "right" }]}>{fmt$(sp.monthly_revenue)}</Text>
+                </View>
+              ))}
+            </View>
+          </>
+        )}
+      </View>
+      <Footer location={data.location} month={data.month} />
+    </Page>
+  );
+}
+
 // ── Main Document ─────────────────────────────────────────────────────────────
 
 export function FinancialPacketDocument({ data }: { data: FinancialPacketData }) {
@@ -616,6 +681,7 @@ export function FinancialPacketDocument({ data }: { data: FinancialPacketData })
       {data.cash_flow && !data.cash_flow.error && <CashFlowPage data={data} />}
       {data.ar_aging && !data.ar_aging.error && <ARPage data={data} />}
       {data.ap_aging && !data.ap_aging.error && <APPage data={data} />}
+      {data.occupancy && <OccupancyPage data={data} />}
     </Document>
   );
 }
