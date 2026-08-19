@@ -142,7 +142,7 @@ export interface FinancialPacketData {
   generated_at: string;
   income_statement: IS;
   balance_sheet?: { summary: BSSummary; error?: string };
-  ar_aging?: { customer_count: number; totals: AgingTotals; delinquent_customers: { customer: string; d61_90: number; over_90: number }[]; error?: string };
+  ar_aging?: { customer_count: number; totals: AgingTotals; delinquent_customers: Record<string, { d61_90: number; over_90: number }>; error?: string };
   ap_aging?: { vendor_count: number; totals: AgingTotals; overdue_vendors: Record<string, APVendor>; overdue_count: number; error?: string };
   cash_flow?: CashFlow;
 }
@@ -476,6 +476,7 @@ function ARPage({ data }: { data: FinancialPacketData }) {
   const ar = data.ar_aging;
   if (!ar || ar.error) return null;
   const t = ar.totals;
+  const delinquent = Object.entries(ar.delinquent_customers ?? {});
 
   return (
     <Page size="LETTER" style={s.page}>
@@ -508,7 +509,7 @@ function ARPage({ data }: { data: FinancialPacketData }) {
           </View>
         </View>
 
-        {ar.delinquent_customers.length > 0 && (
+        {delinquent.length > 0 && (
           <>
             <SectionTitle>Delinquent Accounts (61+ Days)</SectionTitle>
             <View style={s.table}>
@@ -517,9 +518,9 @@ function ARPage({ data }: { data: FinancialPacketData }) {
                 <Text style={[s.th, { flex: 1.5, textAlign: "right" }]}>61–90</Text>
                 <Text style={[s.th, { flex: 1.5, textAlign: "right" }]}>Over 90</Text>
               </View>
-              {ar.delinquent_customers.map((c, i) => (
+              {delinquent.map(([customer, c], i) => (
                 <View key={i} style={[s.tRow, i % 2 === 1 ? s.tRowAlt : {}]}>
-                  <Text style={[s.td, { flex: 4 }]}>{c.customer}</Text>
+                  <Text style={[s.td, { flex: 4 }]}>{customer}</Text>
                   <Text style={[c.d61_90 !== 0 ? s.tdRed : s.tdGray, { flex: 1.5, textAlign: "right" }]}>{fmt$(c.d61_90)}</Text>
                   <Text style={[c.over_90 !== 0 ? s.tdRed : s.tdGray, { flex: 1.5, textAlign: "right" }]}>{fmt$(c.over_90)}</Text>
                 </View>
