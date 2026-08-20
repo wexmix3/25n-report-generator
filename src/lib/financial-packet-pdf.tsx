@@ -357,6 +357,20 @@ function CoverPage({ data }: { data: FinancialPacketData }) {
                 <Text style={[s.td, { flex: 1.2, textAlign: "right" }]}>{fmtPct(sp.occupancy_rate * 100)}</Text>
               </View>
             ))}
+            {(() => {
+              const totalUnits = occBreakdown.reduce((sum, sp) => sum + sp.total_units, 0);
+              const totalOccupied = occBreakdown.reduce((sum, sp) => sum + sp.occupied_units, 0);
+              return (
+                <View style={[s.tRow, s.tRowSub]}>
+                  <Text style={[s.tdBold, { flex: 3 }]}>Total</Text>
+                  <Text style={[s.tdBold, { flex: 1.2, textAlign: "right" }]}>{totalUnits}</Text>
+                  <Text style={[s.tdBold, { flex: 1.2, textAlign: "right" }]}>{totalOccupied}</Text>
+                  <Text style={[s.tdBold, { flex: 1.2, textAlign: "right" }]}>
+                    {fmtPct(totalUnits ? (totalOccupied / totalUnits) * 100 : 0)}
+                  </Text>
+                </View>
+              );
+            })()}
           </View>
         </>
       )}
@@ -438,6 +452,13 @@ function ISPage({ data }: { data: FinancialPacketData }) {
 // that ever appear in each group (no location has an account outside this
 // list), so rendering unconditionally (locations without a given account
 // simply show $0) is safe and keeps every packet directly comparable.
+// Verified against all 5 locations' real July 2026 Balance Sheet exports —
+// only 1120 (every location) and 1123 (Schaumburg only, its security-deposit
+// trust account) actually carry balances. No location has 1110/1121/1122/1189.
+const CASH_DETAIL: [string, string][] = [
+  ["1120", "Operating Cash"],
+  ["1123", "Restricted Cash - Security Deposits"],
+];
 const CURRENT_LIAB_DETAIL: [string, string][] = [
   ["2210", "Accounts Payable"],
   ["2230", "Miscellaneous Accrued Expenses"],
@@ -459,7 +480,6 @@ function BSPage({ data }: { data: FinancialPacketData }) {
   const acctVal = (code: string) => accts[code]?.balance ?? 0;
 
   const assetRows = [
-    { label: "Cash & Bank", val: sm.cash_and_bank },
     { label: "Receivables", val: sm.receivables },
     { label: "Prepaid & Other Current Assets", val: sm.prepaid_and_other },
     { label: "Fixed Assets", val: sm.fixed_assets },
@@ -472,14 +492,24 @@ function BSPage({ data }: { data: FinancialPacketData }) {
       <View style={{ marginTop: 40 }}>
         <SectionTitle>Balance Sheet — End of {data.month}</SectionTitle>
 
-        {/* Assets */}
+        {/* Assets -- Cash & Bank itemized by account */}
         <View style={s.table}>
           <View style={s.tHead}>
             <Text style={[s.th, { flex: 3 }]}>ASSETS</Text>
             <Text style={[s.th, { flex: 2, textAlign: "right" }]}>Balance</Text>
           </View>
+          {CASH_DETAIL.map(([code, label], i) => (
+            <View key={code} style={[s.tRow, i % 2 === 1 ? s.tRowAlt : {}]}>
+              <Text style={[s.td, { flex: 3, paddingLeft: 10 }]}>{label}</Text>
+              <Text style={[s.td, { flex: 2, textAlign: "right" }]}>{fmt$(acctVal(code))}</Text>
+            </View>
+          ))}
+          <View style={[s.tRow, s.tRowSub]}>
+            <Text style={[s.tdBold, { flex: 3 }]}>Total Cash &amp; Bank</Text>
+            <Text style={[s.tdBold, { flex: 2, textAlign: "right" }]}>{fmt$(sm.cash_and_bank)}</Text>
+          </View>
           {assetRows.map(({ label, val }, i) => (
-            <View key={i} style={[s.tRow, i % 2 === 1 ? s.tRowAlt : {}]}>
+            <View key={label} style={[s.tRow, i % 2 === 1 ? s.tRowAlt : {}]}>
               <Text style={[s.td, { flex: 3, paddingLeft: 10 }]}>{label}</Text>
               <Text style={[s.td, { flex: 2, textAlign: "right" }]}>{fmt$(val)}</Text>
             </View>
@@ -801,6 +831,22 @@ function OccupancyPage({ data }: { data: FinancialPacketData }) {
                   <Text style={[s.td, { flex: 2, textAlign: "right" }]}>{fmt$(sp.monthly_revenue)}</Text>
                 </View>
               ))}
+              {(() => {
+                const totalUnits = breakdown.reduce((sum, sp) => sum + sp.total_units, 0);
+                const totalOccupied = breakdown.reduce((sum, sp) => sum + sp.occupied_units, 0);
+                const totalRevenue = breakdown.reduce((sum, sp) => sum + sp.monthly_revenue, 0);
+                return (
+                  <View style={[s.tRow, s.tRowSub]}>
+                    <Text style={[s.tdBold, { flex: 3 }]}>Total</Text>
+                    <Text style={[s.tdBold, { flex: 1.5, textAlign: "right" }]}>{totalUnits}</Text>
+                    <Text style={[s.tdBold, { flex: 1.5, textAlign: "right" }]}>{totalOccupied}</Text>
+                    <Text style={[s.tdBold, { flex: 1.5, textAlign: "right" }]}>
+                      {fmtPct(totalUnits ? (totalOccupied / totalUnits) * 100 : 0)}
+                    </Text>
+                    <Text style={[s.tdBold, { flex: 2, textAlign: "right" }]}>{fmt$(totalRevenue)}</Text>
+                  </View>
+                );
+              })()}
             </View>
           </>
         )}
