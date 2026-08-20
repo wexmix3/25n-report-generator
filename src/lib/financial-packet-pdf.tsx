@@ -110,24 +110,33 @@ interface IS {
     technology: LineItem; travel: LineItem; utilities: LineItem; other: LineItem; _total: LineItem;
   };
   net_operating_income: LineItem & { margin_pct: number };
-  net_income: { actual: number; margin_pct: number };
+  other_income_expense: { other_income: LineItem; other_expense: LineItem; _total: LineItem };
+  net_income: LineItem & { margin_pct: number };
 }
 
+interface CashFlowAdjustment { code: string; description: string; mtd: number; ytd: number; }
 interface CashFlow {
   beginning_cash: number;
   net_cash_flow: number;
   ending_cash: number;
   net_cash_flow_ytd?: number;
   ytd_complete?: boolean;
+  net_income_mtd?: number;
+  net_income_ytd?: number;
+  adjustments?: CashFlowAdjustment[];
+  operating_cash_flow_mtd?: number;
+  operating_cash_flow_ytd?: number;
   error?: string;
 }
 
 interface BSSummary {
   cash_and_bank: number; receivables: number; prepaid_and_other: number;
   fixed_assets: number; other_assets: number; total_assets: number;
-  current_liabilities: number; long_term_liabilities: number;
+  current_liabilities: number; long_term_liabilities: number; total_liabilities: number;
   equity: number; total_liabilities_and_equity: number; balance_check: number;
 }
+
+interface BSAccount { description: string; balance: number; group: string; }
 
 interface AgingTotals {
   current: number; d0_30: number; d31_60: number; d61_90: number;
@@ -145,16 +154,23 @@ interface Occupancy {
   raw?: { space_breakdown?: OccupancySpaceType[] };
 }
 
+interface MonthlyTrendRow {
+  month: string;
+  revenue: number; cos: number; gross_profit: number;
+  opex: number; noi: number; net_income: number;
+}
+
 export interface FinancialPacketData {
   location: string;
   month: string;
   generated_at: string;
   income_statement: IS;
-  balance_sheet?: { summary: BSSummary; error?: string };
+  balance_sheet?: { summary: BSSummary; accounts?: Record<string, BSAccount>; error?: string };
   ar_aging?: { customer_count: number; totals: AgingTotals; delinquent_customers: Record<string, { d61_90: number; over_90: number }>; error?: string };
   ap_aging?: { vendor_count: number; totals: AgingTotals; overdue_vendors: Record<string, APVendor>; overdue_count: number; error?: string };
   cash_flow?: CashFlow;
   occupancy?: Occupancy | null;
+  monthly_trend?: MonthlyTrendRow[] | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -173,8 +189,13 @@ function fmtPct(n: number | null | undefined): string {
   return `${n.toFixed(1)}%`;
 }
 
-function variance$(actual: number, budget: number): string {
-  return fmt$(actual - budget);
+// Favorable variances always display as a positive green number, unfavorable
+// as negative/red -- for expense lines that means flipping the raw actual-
+// minus-budget sign (under budget = actual < budget = favorable), since a
+// reader shouldn't have to remember "green but negative means good" for
+// expense rows. Confirmed with Christine 2026-08-19.
+function variance$(actual: number, budget: number, isExpense: boolean): string {
+  return fmt$(isExpense ? budget - actual : actual - budget);
 }
 
 // ── Shared layout ─────────────────────────────────────────────────────────────
@@ -227,6 +248,13 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
+// Space types that count toward the packet's occupancy story -- must match
+// CORE_TYPE_PREFIXES in parse_kube_api_occupancy.py, which already excludes
+// these same types from the occupancy_pct ratio. Confirmed with Christine
+// 2026-08-19: Meeting Rooms and Day Office shouldn't appear on this table at
+// all, since they're not part of the sticky-occupancy story it's telling.
+const OCCUPANCY_TABLE_PREFIXES = ["Dedicated Desk", "Private Office", "Full Floor Office", "Office Suite", "Team Office"];
+
 // ── Page 1: Cover / KPIs ──────────────────────────────────────────────────────
 
 function CoverPage({ data }: { data: FinancialPacketData }) {
@@ -234,6 +262,10 @@ function CoverPage({ data }: { data: FinancialPacketData }) {
   const rev = is.revenue._total.actual;
   const noi = is.net_operating_income.actual;
   const ni = is.net_income.actual;
+  const occ = data.occupancy;
+  const occBreakdown = (occ?.raw?.space_breakdown ?? []).filter((sp) =>
+    OCCUPANCY_TABLE_PREFIXES.some((p) => sp.space_type.startsWith(p))
+  );
 
   return (
     <Page size="LETTER" style={s.page}>
@@ -260,9 +292,20 @@ function CoverPage({ data }: { data: FinancialPacketData }) {
           <Text style={s.kpiValue}>{fmt$(ni)}</Text>
           <Text style={s.kpiSub}>{fmtPct(is.net_income.margin_pct)} margin</Text>
         </View>
+        {occ && (
+          <View style={s.kpiCard}>
+            <Text style={s.kpiLabel}>Occupancy</Text>
+            <Text style={s.kpiValue}>{fmtPct(occ.occupancy_pct)}</Text>
+            <Text style={s.kpiSub}>{occ.booked_desks ?? "—"} / {occ.available_desks ?? "—"} booked</Text>
+          </View>
+        )}
       </View>
 
-      {/* Quick IS summary */}
+      {/* Quick IS summary — macro totals only; every sub-category already
+          lives on the full Income Statement page and ties out there. A
+          partial sub-line list here (e.g. 3 of 7 revenue categories) looks
+          broken to a reader doing the math, since the sub-lines shown
+          wouldn't sum to the total above them. */}
       <SectionTitle>Income Statement Summary</SectionTitle>
       <View style={s.table}>
         <View style={s.tHead}>
@@ -272,17 +315,15 @@ function CoverPage({ data }: { data: FinancialPacketData }) {
           <Text style={[s.th, { flex: 1.5, textAlign: "right" }]}>Variance</Text>
         </View>
         {[
-          { label: "Revenue",             li: is.revenue._total, bold: true, isExpense: false },
-          { label: "  Workspace Rental",  li: is.revenue.workspace_rental, isExpense: false },
-          { label: "  Meeting Space",     li: is.revenue.meeting_space, isExpense: false },
-          { label: "  Package Revenue",   li: is.revenue.package_revenue, isExpense: false },
-          { label: "Cost of Sales",       li: is.cos._total, bold: true, isExpense: true },
-          { label: "Gross Profit",        li: is.gross_profit, bold: true, isExpense: false },
-          { label: "Total OPEX",          li: is.opex._total, bold: true, isExpense: true },
-          { label: "  Payroll",           li: is.opex.payroll, isExpense: true },
-          { label: "  Facilities",        li: is.opex.facilities, isExpense: true },
-          { label: "  Insurance",         li: is.opex.insurance, isExpense: true },
-          { label: "NOI",                 li: is.net_operating_income, bold: true, isExpense: false },
+          { label: "Revenue",                        li: is.revenue._total, bold: true, isExpense: false },
+          { label: "Cost of Sales",                   li: is.cos._total, bold: true, isExpense: true },
+          { label: "Gross Profit",                    li: is.gross_profit, bold: true, isExpense: false },
+          { label: "Total OPEX",                      li: is.opex._total, bold: true, isExpense: true },
+          { label: "Operating Income (NOI)",           li: is.net_operating_income, bold: true, isExpense: false },
+          ...(is.other_income_expense._total.actual !== 0 || is.other_income_expense._total.budget !== 0
+            ? [{ label: "Non-Operating Income/Expense", li: is.other_income_expense._total, bold: true, isExpense: false }]
+            : []),
+          { label: "Net Income",                      li: is.net_income, bold: true, isExpense: false },
         ].map(({ label, li, bold, isExpense }, i) => {
           const favorable = isExpense ? li.actual <= li.budget : li.actual >= li.budget;
           return (
@@ -291,12 +332,34 @@ function CoverPage({ data }: { data: FinancialPacketData }) {
             <Text style={[bold ? s.tdBold : s.td, { flex: 1.5, textAlign: "right" }]}>{fmt$(li.actual)}</Text>
             <Text style={[s.tdGray, { flex: 1.5, textAlign: "right" }]}>{fmt$(li.budget)}</Text>
             <Text style={[favorable ? s.tdGreen : s.tdRed, { flex: 1.5, textAlign: "right" }]}>
-              {variance$(li.actual, li.budget)}
+              {variance$(li.actual, li.budget, isExpense)}
             </Text>
           </View>
           );
         })}
       </View>
+
+      {occ && occBreakdown.length > 0 && (
+        <>
+          <SectionTitle>Occupancy by Space Type</SectionTitle>
+          <View style={s.table}>
+            <View style={s.tHead}>
+              <Text style={[s.th, { flex: 3 }]}>Space Type</Text>
+              <Text style={[s.th, { flex: 1.2, textAlign: "right" }]}>Total</Text>
+              <Text style={[s.th, { flex: 1.2, textAlign: "right" }]}>Occupied</Text>
+              <Text style={[s.th, { flex: 1.2, textAlign: "right" }]}>Occ. %</Text>
+            </View>
+            {occBreakdown.map((sp, i) => (
+              <View key={i} style={[s.tRow, i % 2 === 1 ? s.tRowAlt : {}]}>
+                <Text style={[s.td, { flex: 3 }]}>{sp.space_type}</Text>
+                <Text style={[s.td, { flex: 1.2, textAlign: "right" }]}>{sp.total_units}</Text>
+                <Text style={[s.td, { flex: 1.2, textAlign: "right" }]}>{sp.occupied_units}</Text>
+                <Text style={[s.td, { flex: 1.2, textAlign: "right" }]}>{fmtPct(sp.occupancy_rate * 100)}</Text>
+              </View>
+            ))}
+          </View>
+        </>
+      )}
 
       <Footer location={data.location} month={data.month} />
     </Page>
@@ -356,7 +419,7 @@ function ISPage({ data }: { data: FinancialPacketData }) {
               <Text style={[bold ? s.tdBold : s.td, { flex: 1.5, textAlign: "right" }]}>{fmt$(li.actual)}</Text>
               <Text style={[s.tdGray, { flex: 1.5, textAlign: "right" }]}>{fmt$(li.budget)}</Text>
               <Text style={[favorable ? s.tdGreen : s.tdRed, { flex: 1.5, textAlign: "right" }]}>
-                {variance$(li.actual, li.budget)}
+                {variance$(li.actual, li.budget, !!isExpense)}
               </Text>
             </View>
             );
@@ -370,10 +433,30 @@ function ISPage({ data }: { data: FinancialPacketData }) {
 
 // ── Page 3: Balance Sheet ─────────────────────────────────────────────────────
 
+// Itemized breakdown requested by Christine 2026-08-19 -- verified against
+// real Balance Sheet exports for all 5 locations: these are the only codes
+// that ever appear in each group (no location has an account outside this
+// list), so rendering unconditionally (locations without a given account
+// simply show $0) is safe and keeps every packet directly comparable.
+const CURRENT_LIAB_DETAIL: [string, string][] = [
+  ["2210", "Accounts Payable"],
+  ["2230", "Miscellaneous Accrued Expenses"],
+  ["2240", "Deferred Revenue"],
+  ["2260", "Security Deposits"],
+  ["2280", "Prepayments"],
+];
+const EQUITY_DETAIL: [string, string][] = [
+  ["3200", "Members Equity"],
+  ["3400", "Members Draw"],
+  ["3800", "Retained Earnings"],
+];
+
 function BSPage({ data }: { data: FinancialPacketData }) {
   const bs = data.balance_sheet;
   if (!bs || bs.error) return null;
   const sm = bs.summary;
+  const accts = bs.accounts ?? {};
+  const acctVal = (code: string) => accts[code]?.balance ?? 0;
 
   const assetRows = [
     { label: "Cash & Bank", val: sm.cash_and_bank },
@@ -381,11 +464,6 @@ function BSPage({ data }: { data: FinancialPacketData }) {
     { label: "Prepaid & Other Current Assets", val: sm.prepaid_and_other },
     { label: "Fixed Assets", val: sm.fixed_assets },
     { label: "Other Assets", val: sm.other_assets },
-  ];
-  const liabRows = [
-    { label: "Current Liabilities", val: sm.current_liabilities },
-    { label: "Long-term Liabilities", val: sm.long_term_liabilities },
-    { label: "Equity", val: sm.equity },
   ];
 
   return (
@@ -412,20 +490,53 @@ function BSPage({ data }: { data: FinancialPacketData }) {
           </View>
         </View>
 
-        {/* Liabilities + Equity */}
+        {/* Liabilities -- itemized by account */}
         <View style={[s.table, { marginTop: 10 }]}>
           <View style={s.tHead}>
-            <Text style={[s.th, { flex: 3 }]}>LIABILITIES &amp; EQUITY</Text>
+            <Text style={[s.th, { flex: 3 }]}>LIABILITIES</Text>
             <Text style={[s.th, { flex: 2, textAlign: "right" }]}>Balance</Text>
           </View>
-          {liabRows.map(({ label, val }, i) => (
-            <View key={i} style={[s.tRow, i % 2 === 1 ? s.tRowAlt : {}]}>
+          {CURRENT_LIAB_DETAIL.map(([code, label], i) => (
+            <View key={code} style={[s.tRow, i % 2 === 1 ? s.tRowAlt : {}]}>
               <Text style={[s.td, { flex: 3, paddingLeft: 10 }]}>{label}</Text>
-              <Text style={[s.td, { flex: 2, textAlign: "right" }]}>{fmt$(val)}</Text>
+              <Text style={[s.td, { flex: 2, textAlign: "right" }]}>{fmt$(acctVal(code))}</Text>
             </View>
           ))}
           <View style={[s.tRow, s.tRowSub]}>
-            <Text style={[s.tdBold, { flex: 3 }]}>Total Liabilities + Equity</Text>
+            <Text style={[s.tdBold, { flex: 3 }]}>Total Current Liabilities</Text>
+            <Text style={[s.tdBold, { flex: 2, textAlign: "right" }]}>{fmt$(sm.current_liabilities)}</Text>
+          </View>
+          <View style={s.tRow}>
+            <Text style={[s.td, { flex: 3, paddingLeft: 10 }]}>Long-term Liabilities</Text>
+            <Text style={[s.td, { flex: 2, textAlign: "right" }]}>{fmt$(sm.long_term_liabilities)}</Text>
+          </View>
+          <View style={[s.tRow, s.tRowSub]}>
+            <Text style={[s.tdBold, { flex: 3 }]}>Total Liabilities</Text>
+            <Text style={[s.tdBold, { flex: 2, textAlign: "right" }]}>{fmt$(sm.total_liabilities)}</Text>
+          </View>
+        </View>
+
+        {/* Capital -- itemized by account */}
+        <View style={[s.table, { marginTop: 10 }]}>
+          <View style={s.tHead}>
+            <Text style={[s.th, { flex: 3 }]}>CAPITAL</Text>
+            <Text style={[s.th, { flex: 2, textAlign: "right" }]}>Balance</Text>
+          </View>
+          {EQUITY_DETAIL.map(([code, label], i) => (
+            <View key={code} style={[s.tRow, i % 2 === 1 ? s.tRowAlt : {}]}>
+              <Text style={[s.td, { flex: 3, paddingLeft: 10 }]}>{label}</Text>
+              <Text style={[s.td, { flex: 2, textAlign: "right" }]}>{fmt$(acctVal(code))}</Text>
+            </View>
+          ))}
+          <View style={[s.tRow, s.tRowSub]}>
+            <Text style={[s.tdBold, { flex: 3 }]}>Total Capital</Text>
+            <Text style={[s.tdBold, { flex: 2, textAlign: "right" }]}>{fmt$(sm.equity)}</Text>
+          </View>
+        </View>
+
+        <View style={[s.table, { marginTop: 10 }]}>
+          <View style={[s.tRow, s.tRowSub]}>
+            <Text style={[s.tdBold, { flex: 3 }]}>Total Liabilities + Capital</Text>
             <Text style={[s.tdBold, { flex: 2, textAlign: "right" }]}>{fmt$(sm.total_liabilities_and_equity)}</Text>
           </View>
         </View>
@@ -474,6 +585,36 @@ function CashFlowPage({ data }: { data: FinancialPacketData }) {
             </View>
           ))}
         </View>
+
+        {/* Net Income -> Cash reconciliation, straight from Yardi's own
+            indirect-method statement -- gives the "why did cash move this
+            way" detail Christine asked for, instead of just the 4-line
+            summary above. */}
+        {cf.adjustments && cf.adjustments.length > 0 && (
+          <>
+            <SectionTitle>Net Income to Cash Flow Reconciliation</SectionTitle>
+            <View style={s.table}>
+              <View style={s.tHead}>
+                <Text style={[s.th, { flex: 4 }]}>Line Item</Text>
+                <Text style={[s.th, { flex: 1.5, textAlign: "right" }]}>MTD</Text>
+              </View>
+              <View style={[s.tRow, s.tRowSub]}>
+                <Text style={[s.tdBold, { flex: 4 }]}>Net Income</Text>
+                <Text style={[s.tdBold, { flex: 1.5, textAlign: "right" }]}>{fmt$(cf.net_income_mtd)}</Text>
+              </View>
+              {cf.adjustments.map((adj, i) => (
+                <View key={adj.code} style={[s.tRow, i % 2 === 1 ? s.tRowAlt : {}]}>
+                  <Text style={[s.td, { flex: 4, paddingLeft: 10 }]}>{adj.description}</Text>
+                  <Text style={[s.td, { flex: 1.5, textAlign: "right" }]}>{fmt$(adj.mtd)}</Text>
+                </View>
+              ))}
+              <View style={[s.tRow, s.tRowSub]}>
+                <Text style={[s.tdBold, { flex: 4 }]}>Cash Flow from Operations</Text>
+                <Text style={[s.tdBold, { flex: 1.5, textAlign: "right" }]}>{fmt$(cf.operating_cash_flow_mtd)}</Text>
+              </View>
+            </View>
+          </>
+        )}
       </View>
       <Footer location={data.location} month={data.month} />
     </Page>
@@ -617,7 +758,9 @@ function APPage({ data }: { data: FinancialPacketData }) {
 function OccupancyPage({ data }: { data: FinancialPacketData }) {
   const occ = data.occupancy;
   if (!occ) return null;
-  const breakdown = occ.raw?.space_breakdown ?? [];
+  const breakdown = (occ.raw?.space_breakdown ?? []).filter((sp) =>
+    OCCUPANCY_TABLE_PREFIXES.some((p) => sp.space_type.startsWith(p))
+  );
 
   return (
     <Page size="LETTER" style={s.page}>
@@ -667,6 +810,60 @@ function OccupancyPage({ data }: { data: FinancialPacketData }) {
   );
 }
 
+// ── Page: Income Statement by Month ───────────────────────────────────────────
+
+const TREND_ROWS: { label: string; key: "revenue" | "cos" | "gross_profit" | "opex" | "noi" | "net_income"; bold?: boolean }[] = [
+  { label: "Revenue", key: "revenue", bold: true },
+  { label: "Cost of Sales", key: "cos" },
+  { label: "Gross Profit", key: "gross_profit", bold: true },
+  { label: "Total OPEX", key: "opex" },
+  { label: "Operating Income (NOI)", key: "noi", bold: true },
+  { label: "Net Income", key: "net_income", bold: true },
+];
+
+function MonthlyTrendPage({ data }: { data: FinancialPacketData }) {
+  const trend = data.monthly_trend;
+  if (!trend || trend.length === 0) return null;
+
+  const monthCol = { flex: 1 };
+  const labelCol = { flex: 2.2 };
+
+  return (
+    <Page size="LETTER" style={s.page}>
+      <FixedHeader location={data.location} month={data.month} subtitle="Income Statement by Month" />
+      <View style={{ marginTop: 40 }}>
+        <SectionTitle>Income Statement by Month</SectionTitle>
+        <View style={s.table}>
+          <View style={s.tHead}>
+            <Text style={[s.th, labelCol]}>Line Item</Text>
+            {trend.map((m) => (
+              <Text key={m.month} style={[s.th, monthCol, { textAlign: "right", fontSize: 5.5 }]}>
+                {m.month.replace(/ \d{4}$/, "")}
+              </Text>
+            ))}
+            <Text style={[s.th, monthCol, { textAlign: "right", fontSize: 5.5 }]}>YTD</Text>
+          </View>
+          {TREND_ROWS.map(({ label, key, bold }, i) => {
+            const ytd = trend.reduce((sum, m) => sum + m[key], 0);
+            return (
+              <View key={key} style={[s.tRow, i % 2 === 1 && !bold ? s.tRowAlt : {}, bold ? s.tRowSub : {}]}>
+                <Text style={[bold ? s.tdBold : s.td, labelCol, { fontSize: 6.5 }]}>{label}</Text>
+                {trend.map((m) => (
+                  <Text key={m.month} style={[bold ? s.tdBold : s.td, monthCol, { textAlign: "right", fontSize: 6 }]}>
+                    {fmt$(m[key])}
+                  </Text>
+                ))}
+                <Text style={[bold ? s.tdBold : s.td, monthCol, { textAlign: "right", fontSize: 6 }]}>{fmt$(ytd)}</Text>
+              </View>
+            );
+          })}
+        </View>
+      </View>
+      <Footer location={data.location} month={data.month} />
+    </Page>
+  );
+}
+
 // ── Main Document ─────────────────────────────────────────────────────────────
 
 export function FinancialPacketDocument({ data }: { data: FinancialPacketData }) {
@@ -677,6 +874,7 @@ export function FinancialPacketDocument({ data }: { data: FinancialPacketData })
     >
       <CoverPage data={data} />
       <ISPage data={data} />
+      {data.monthly_trend && data.monthly_trend.length > 0 && <MonthlyTrendPage data={data} />}
       {data.balance_sheet && !data.balance_sheet.error && <BSPage data={data} />}
       {data.cash_flow && !data.cash_flow.error && <CashFlowPage data={data} />}
       {data.ar_aging && !data.ar_aging.error && <ARPage data={data} />}
