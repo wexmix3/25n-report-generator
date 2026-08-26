@@ -173,6 +173,53 @@ export interface FinancialPacketData {
   monthly_trend?: MonthlyTrendRow[] | null;
 }
 
+// build_statements.py only emits a revenue/opex category when that location/month
+// actually had a GL transaction in it, so the category set varies by period (e.g.
+// Frisco/Geneva/Uptown never produce "admin_legal"; Waco/Schaumburg do). The pages
+// below read specific categories unconditionally, so any period missing one throws
+// mid-render. Normalize once here so every category is always a real LineItem.
+const ZERO: LineItem = { actual: 0, budget: 0, variance: 0 };
+
+// Real-world payloads aren't guaranteed to match the IS shape (categories are
+// omitted whenever the GL had no transaction in them that period), so treat
+// every category lookup as possibly-missing regardless of what the type says.
+function li(v: unknown): LineItem {
+  return (v as LineItem) ?? ZERO;
+}
+function liM(v: unknown): LineItem & { margin_pct: number } {
+  return (v as LineItem & { margin_pct: number }) ?? { ...ZERO, margin_pct: 0 };
+}
+
+function normalizeIS(is: IS): IS {
+  const rev = (is.revenue ?? {}) as Partial<IS["revenue"]>;
+  const cos = (is.cos ?? {}) as Partial<IS["cos"]>;
+  const opex = (is.opex ?? {}) as Partial<IS["opex"]>;
+  const oie = (is.other_income_expense ?? {}) as Partial<IS["other_income_expense"]>;
+  return {
+    ...is,
+    revenue: {
+      membership: li(rev.membership), registration_access: li(rev.registration_access),
+      workspace_rental: li(rev.workspace_rental), meeting_space: li(rev.meeting_space),
+      package_revenue: li(rev.package_revenue), member_amenities: li(rev.member_amenities),
+      miscellaneous: li(rev.miscellaneous), _total: li(rev._total),
+    },
+    cos: { direct_cos: li(cos.direct_cos), community: li(cos.community), _total: li(cos._total) },
+    opex: {
+      payroll: li(opex.payroll), facilities: li(opex.facilities), insurance: li(opex.insurance),
+      admin_legal: li(opex.admin_legal), marketing: li(opex.marketing),
+      meals_entertainment: li(opex.meals_entertainment), office_supplies: li(opex.office_supplies),
+      technology: li(opex.technology), travel: li(opex.travel), utilities: li(opex.utilities),
+      other: li(opex.other), _total: li(opex._total),
+    },
+    gross_profit: liM(is.gross_profit),
+    net_operating_income: liM(is.net_operating_income),
+    net_income: liM(is.net_income),
+    other_income_expense: {
+      other_income: li(oie.other_income), other_expense: li(oie.other_expense), _total: li(oie._total),
+    },
+  };
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 function fmt$(n: number | null | undefined): string {
@@ -913,19 +960,20 @@ function MonthlyTrendPage({ data }: { data: FinancialPacketData }) {
 // ── Main Document ─────────────────────────────────────────────────────────────
 
 export function FinancialPacketDocument({ data }: { data: FinancialPacketData }) {
+  const normalized: FinancialPacketData = { ...data, income_statement: normalizeIS(data.income_statement) };
   return (
     <Document
-      title={`25N ${data.location} — ${data.month} Financial Packet`}
+      title={`25N ${normalized.location} — ${normalized.month} Financial Packet`}
       author="25N Coworking / Wex Advisory"
     >
-      <CoverPage data={data} />
-      <ISPage data={data} />
-      {data.monthly_trend && data.monthly_trend.length > 0 && <MonthlyTrendPage data={data} />}
-      {data.balance_sheet && !data.balance_sheet.error && <BSPage data={data} />}
-      {data.cash_flow && !data.cash_flow.error && <CashFlowPage data={data} />}
-      {data.ar_aging && !data.ar_aging.error && <ARPage data={data} />}
-      {data.ap_aging && !data.ap_aging.error && <APPage data={data} />}
-      {data.occupancy && <OccupancyPage data={data} />}
+      <CoverPage data={normalized} />
+      <ISPage data={normalized} />
+      {normalized.monthly_trend && normalized.monthly_trend.length > 0 && <MonthlyTrendPage data={normalized} />}
+      {normalized.balance_sheet && !normalized.balance_sheet.error && <BSPage data={normalized} />}
+      {normalized.cash_flow && !normalized.cash_flow.error && <CashFlowPage data={normalized} />}
+      {normalized.ar_aging && !normalized.ar_aging.error && <ARPage data={normalized} />}
+      {normalized.ap_aging && !normalized.ap_aging.error && <APPage data={normalized} />}
+      {normalized.occupancy && <OccupancyPage data={normalized} />}
     </Document>
   );
 }
