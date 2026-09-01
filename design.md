@@ -60,9 +60,13 @@ require reading source code to verify.
   "favorable" flips for expense-type rows (actual ≤ budget = favorable) vs.
   revenue/income rows (actual ≥ budget = favorable). A reader should never see
   a red expense number that is actually good news, or vice versa.
-- Aging-bucket values (AR/AP) are red once they cross into the "overdue"
-  range for that table (61+ days AR, 31+ days AP) — never red before that
-  threshold, never neutral gray after it.
+- Aging-bucket values are red once they cross into the "overdue" range for
+  that table — **31+ days for both AR and AP summary tables** (AR: Current/
+  0-30 neutral, 31-60/61-90/Over 90 red; AP: 0-30 neutral, 31-60/61-90/Over 90
+  red). This is a *lower* bar than the separate "Delinquent Accounts (61+
+  Days)" drill-down section on the AR page, which only lists customers 61+
+  days late — don't conflate the two thresholds, they're intentionally
+  different (summary table warns earlier, drill-down lists the worse cases).
 - Balance-sheet balance-check warnings use amber (`#FEF3C7` bg / `#92400E`
   text), not red — this is a "review" signal, not an error signal.
 
