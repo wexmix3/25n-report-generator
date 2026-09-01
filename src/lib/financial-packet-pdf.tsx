@@ -233,7 +233,8 @@ function fmt$(n: number | null | undefined): string {
 
 function fmtPct(n: number | null | undefined): string {
   if (n == null) return "—";
-  return `${n.toFixed(1)}%`;
+  const str = `${Math.abs(n).toFixed(1)}%`;
+  return n < 0 ? `(${str})` : str;
 }
 
 // Favorable variances always display as a positive green number, unfavorable

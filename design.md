@@ -54,6 +54,18 @@ require reading source code to verify.
   get 12px left padding — enough to read as a hierarchy at a glance, not a
   marginal nudge.
 
+## Number formatting
+
+- Dollar values: negative shown as `($1,234)`, never `-$1,234` — parentheses,
+  not a minus sign.
+- Percentage values (margins, occupancy): same convention — negative shown
+  as `(12.3%)`, never `-12.3%`. Applies to any `margin_pct` display (gross
+  profit, NOI, net income); occupancy percentages are never negative in
+  practice but the formatter should handle it the same way regardless.
+- This is a financial-statement convention, distinct from the `+`/`-`
+  delta-style percentage formatting used elsewhere in this repo (e.g.
+  GL variance % change) — don't conflate the two conventions.
+
 ## Color-coded values (financial correctness signal, not decoration)
 
 - A value is green if favorable, red if unfavorable — the definition of
