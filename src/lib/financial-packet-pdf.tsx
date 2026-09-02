@@ -160,6 +160,19 @@ interface MonthlyTrendRow {
   opex: number; noi: number; net_income: number;
 }
 
+// Every real GL account with activity in at least one month on file, no
+// collapsing into P&L categories -- Mara's 2026-09-01 ask via Christine
+// ("Financial Packet Updates": "a more detailed Income Statement by
+// Month... every GL account... that's how we report now without
+// collapsing"). Distinct from MonthlyTrendRow above, which stays the
+// macro-category rollup.
+interface GLDetailByMonthRow {
+  account_code: string;
+  description: string;
+  category: string;
+  monthly: Record<string, number>;
+}
+
 export interface FinancialPacketData {
   location: string;
   month: string;
@@ -171,6 +184,8 @@ export interface FinancialPacketData {
   cash_flow?: CashFlow;
   occupancy?: Occupancy | null;
   monthly_trend?: MonthlyTrendRow[] | null;
+  gl_detail_by_month?: GLDetailByMonthRow[] | null;
+  gl_detail_months?: string[] | null;
 }
 
 // build_statements.py only emits a revenue/opex category when that location/month
@@ -958,6 +973,50 @@ function MonthlyTrendPage({ data }: { data: FinancialPacketData }) {
   );
 }
 
+// ── Page: GL Detail by Month ───────────────────────────────────────────────────
+
+function GLDetailByMonthPage({ data }: { data: FinancialPacketData }) {
+  const detail = data.gl_detail_by_month;
+  const months = data.gl_detail_months;
+  if (!detail || detail.length === 0 || !months || months.length === 0) return null;
+
+  const codeCol = { width: 24 };
+  const descCol = { flex: 2.4 };
+  const monthCol = { flex: 1 };
+
+  return (
+    <Page size="LETTER" style={s.page}>
+      <FixedHeader location={data.location} month={data.month} subtitle="GL Detail by Month" />
+      <View style={{ marginTop: 40 }}>
+        <SectionTitle>GL Detail by Month (Every Account, No Collapsing)</SectionTitle>
+        <View style={s.table}>
+          <View style={s.tHead}>
+            <Text style={[s.th, codeCol]}>Acct</Text>
+            <Text style={[s.th, descCol]}>Description</Text>
+            {months.map((m) => (
+              <Text key={m} style={[s.th, monthCol, { textAlign: "right", fontSize: 5.5 }]}>
+                {m.replace(/ \d{4}$/, "")}
+              </Text>
+            ))}
+          </View>
+          {detail.map((acct, i) => (
+            <View key={acct.account_code} style={[s.tRow, i % 2 === 1 ? s.tRowAlt : {}]}>
+              <Text style={[s.td, codeCol, { fontSize: 5.5 }]}>{acct.account_code}</Text>
+              <Text style={[s.td, descCol, { fontSize: 6 }]}>{acct.description}</Text>
+              {months.map((m) => (
+                <Text key={m} style={[s.td, monthCol, { textAlign: "right", fontSize: 5.5 }]}>
+                  {fmt$(acct.monthly[m] ?? 0)}
+                </Text>
+              ))}
+            </View>
+          ))}
+        </View>
+      </View>
+      <Footer location={data.location} month={data.month} />
+    </Page>
+  );
+}
+
 // ── Main Document ─────────────────────────────────────────────────────────────
 
 export function FinancialPacketDocument({ data }: { data: FinancialPacketData }) {
@@ -970,6 +1029,7 @@ export function FinancialPacketDocument({ data }: { data: FinancialPacketData })
       <CoverPage data={normalized} />
       <ISPage data={normalized} />
       {normalized.monthly_trend && normalized.monthly_trend.length > 0 && <MonthlyTrendPage data={normalized} />}
+      {normalized.gl_detail_by_month && normalized.gl_detail_by_month.length > 0 && <GLDetailByMonthPage data={normalized} />}
       {normalized.balance_sheet && !normalized.balance_sheet.error && <BSPage data={normalized} />}
       {normalized.cash_flow && !normalized.cash_flow.error && <CashFlowPage data={normalized} />}
       {normalized.ar_aging && !normalized.ar_aging.error && <ARPage data={normalized} />}
